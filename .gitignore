@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+.env
+
+# 학습 산출물
+sim/runs/
+*.zip
+events.out.tfevents.*
+
+# MuJoCo 자동 로그
+MUJOCO_LOG.TXT
+
+# 영상 (현재 사용 안 하지만 미래 대비)
+sim/videos/
+*.mp4
+*.gif
+
+# OS / 에디터
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
+
+# Claude Code 로컬 설정 (개인 권한 등)
+.claude/settings.local.json

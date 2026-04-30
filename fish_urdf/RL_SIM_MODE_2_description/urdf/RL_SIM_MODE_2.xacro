@@ -1,0 +1,57 @@
+<?xml version="1.0" ?>
+<robot name="RL_SIM_MODE_2" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+<xacro:include filename="$(find RL_SIM_MODE_2_description)/urdf/materials.xacro" />
+<xacro:include filename="$(find RL_SIM_MODE_2_description)/urdf/RL_SIM_MODE_2.trans" />
+<xacro:include filename="$(find RL_SIM_MODE_2_description)/urdf/RL_SIM_MODE_2.gazebo" />
+<link name="base_link">
+  <inertial>
+    <origin xyz="0.012282912365453445 7.63710732790047e-05 -0.040495197986768504" rpy="0 0 0"/>
+    <mass value="2.4349242520279217"/>
+    <inertia ixx="0.005171" iyy="0.031671" izz="0.029391" ixy="1.7e-05" iyz="-1e-06" ixz="-0.000768"/>
+  </inertial>
+  <visual>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="package://RL_SIM_MODE_2_description/meshes/base_link.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="silver"/>
+  </visual>
+  <collision>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="package://RL_SIM_MODE_2_description/meshes/base_link.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+</link>
+
+<link name="tail_link_1_1">
+  <inertial>
+    <origin xyz="0.07147293341395211 0.0009688759369753741 -0.005351504140492791" rpy="0 0 0"/>
+    <mass value="0.09257590043127194"/>
+    <inertia ixx="4.5e-05" iyy="0.00024" izz="0.0002" ixy="6e-06" iyz="-0.0" ixz="0.0"/>
+  </inertial>
+  <visual>
+    <origin xyz="-0.144817 0.0 0.03565" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="package://RL_SIM_MODE_2_description/meshes/tail_link_1_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+    <material name="silver"/>
+  </visual>
+  <collision>
+    <origin xyz="-0.144817 0.0 0.03565" rpy="0 0 0"/>
+    <geometry>
+      <mesh filename="package://RL_SIM_MODE_2_description/meshes/tail_link_1_1.stl" scale="0.001 0.001 0.001"/>
+    </geometry>
+  </collision>
+</link>
+
+<joint name="tail_joint" type="revolute">
+  <origin xyz="0.144817 0.0 -0.03565" rpy="0 0 0"/>
+  <parent link="base_link"/>
+  <child link="tail_link_1_1"/>
+  <axis xyz="0.0 0.0 -1.0"/>
+  <limit upper="0.349066" lower="-0.349066" effort="100" velocity="100"/>
+</joint>
+
+</robot>

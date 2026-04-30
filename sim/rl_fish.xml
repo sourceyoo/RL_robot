@@ -1,0 +1,67 @@
+<mujoco model="rl_fish">
+  <compiler angle="radian" meshdir="../fish_urdf/RL_SIM_MODE_2_description/meshes/"/>
+
+  <option timestep="0.002" integrator="implicit" density="5000" viscosity="0.0001">
+    <flag gravity="disable"/>
+  </option>
+
+  <visual>
+    <headlight ambient=".4 .4 .4" diffuse=".8 .8 .8" specular="0.1 0.1 0.1"/>
+    <map znear=".01"/>
+    <quality shadowsize="2048"/>
+  </visual>
+
+  <asset>
+    <texture name="skybox" type="skybox" builtin="gradient" rgb1=".4 .6 .8" rgb2="0 0 0" width="800" height="800"/>
+    <texture name="grid" type="2d" builtin="checker" rgb1=".1 .2 .3" rgb2=".2 .3 .4" width="300" height="300" mark="edge" markrgb=".2 .3 .4"/>
+    <material name="grid" texture="grid" texrepeat="2 2" reflectance=".2"/>
+    <material name="self" rgba=".7 .5 .3 1"/>
+    <material name="target" rgba=".6 .3 .3 1"/>
+
+    <mesh name="base_link" file="base_link.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="tail_link" file="tail_link_1_1.stl" scale="0.001 0.001 0.001"/>
+  </asset>
+
+  <default>
+    <geom material="self" fluidshape="ellipsoid"/>
+    <joint damping="0.05" armature="0.001"/>
+  </default>
+
+  <worldbody>
+    <camera name="tracking_top" pos="0 0 1.5" xyaxes="1 0 0 0 1 0" mode="trackcom"/>
+    <camera name="tracking_x"   pos="-1 0 .3" xyaxes="0 -1 0 0.342 0 0.940" fovy="60" mode="trackcom"/>
+    <camera name="fixed_top"    pos="0 0 4" fovy="20"/>
+
+    <geom name="ground" type="plane" size="3 3 .1" pos="0 0 -1" material="grid" contype="0" conaffinity="0"/>
+    <geom name="target" type="sphere" pos="1 0 0" size=".05" material="target" contype="0" conaffinity="0"/>
+
+    <body name="base_link" pos="0 0 0">
+      <freejoint name="root"/>
+      <inertial pos="0.012282912365453 7.63710732790047e-05 -0.040495197986768"
+                mass="2.4349242520279"
+                fullinertia="0.005171 0.031671 0.029391 1.7e-05 -0.000768 -1e-06"/>
+      <site name="torso" size="0.01" rgba="0 0 0 0"/>
+      <geom type="mesh" mesh="base_link"/>
+
+      <body name="tail_link" pos="0.144817 0 -0.03565">
+        <inertial pos="0.0714729 0.000968876 -0.0053515"
+                  quat="0.507623 0.507623 0.492259 0.492259"
+                  mass="0.0925759"
+                  diaginertia="0.000240184 0.0002 4.48156e-05"/>
+        <joint name="tail_joint" type="hinge" axis="0 0 -1" range="-0.349066 0.349066"/>
+        <geom pos="-0.144817 0 0.03565" type="mesh" mesh="tail_link"/>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <motor name="tail" joint="tail_joint" ctrlrange="-1 1" gear="0.3"/>
+  </actuator>
+
+  <sensor>
+    <velocimeter name="torso_vel" site="torso"/>
+    <gyro        name="torso_gyro" site="torso"/>
+    <framepos    name="torso_pos" objtype="site" objname="torso"/>
+    <framequat   name="torso_quat" objtype="site" objname="torso"/>
+  </sensor>
+</mujoco>
