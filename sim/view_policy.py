@@ -64,7 +64,8 @@ def main():
             if sac is not None:
                 action, _ = sac.predict(obs, deterministic=True)
             elif args.sine:
-                action = np.array([0.95 * np.sin(2 * np.pi * 2.0 * data.time)])
+                # 6Hz, 진폭 1.0 (motor ctrlrange 풀스윙 → 가능한 만큼 ±20° 흔들기 시도)
+                action = np.array([1.0 * np.sin(2 * np.pi * 6.0 * data.time)])
             else:
                 action = np.zeros(model.nu)
 

@@ -20,6 +20,10 @@ sim/videos/
 *.mp4
 *.gif
 
+# 큰 CAD 바이너리 (URDF/mesh가 시뮬에 필요한 본체. STEP은 참조용이라 제외)
+*.step
+*.STEP
+
 # OS / 에디터
 .DS_Store
 .vscode/

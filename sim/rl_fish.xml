@@ -1,7 +1,7 @@
 <mujoco model="rl_fish">
-  <compiler angle="radian" meshdir="../fish_urdf/RL_SIM_MODE_2_description/meshes/"/>
+  <compiler angle="radian" meshdir="../fish_urdf/RL_SIM_MODE_3_description/meshes/"/>
 
-  <option timestep="0.002" integrator="implicit" density="5000" viscosity="0.0001">
+  <option timestep="0.002" integrator="implicit" density="1000" viscosity="0.001">
     <flag gravity="disable"/>
   </option>
 
@@ -14,17 +14,19 @@
   <asset>
     <texture name="skybox" type="skybox" builtin="gradient" rgb1=".4 .6 .8" rgb2="0 0 0" width="800" height="800"/>
     <texture name="grid" type="2d" builtin="checker" rgb1=".1 .2 .3" rgb2=".2 .3 .4" width="300" height="300" mark="edge" markrgb=".2 .3 .4"/>
-    <material name="grid" texture="grid" texrepeat="2 2" reflectance=".2"/>
-    <material name="self" rgba=".7 .5 .3 1"/>
-    <material name="target" rgba=".6 .3 .3 1"/>
+    <material name="grid"     texture="grid" texrepeat="2 2" reflectance=".2"/>
+    <material name="pla"      rgba=".7 .5 .3 1"/>
+    <material name="silicone" rgba=".4 .6 .8 0.65"/>
+    <material name="target"   rgba=".6 .3 .3 1"/>
 
-    <mesh name="base_link" file="base_link.stl" scale="0.001 0.001 0.001"/>
-    <mesh name="tail_link" file="tail_link_1_1.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="base_link" file="base_link.stl"      scale="0.001 0.001 0.001"/>
+    <mesh name="tail_link" file="tail_link_1_1.stl"  scale="0.001 0.001 0.001"/>
+    <mesh name="fin_1"     file="fin_1.stl"          scale="0.001 0.001 0.001"/>
   </asset>
 
   <default>
-    <geom material="self" fluidshape="ellipsoid"/>
-    <joint damping="0.05" armature="0.001"/>
+    <geom material="pla" fluidshape="ellipsoid"/>
+    <joint damping="0.005" armature="0.0001"/>
   </default>
 
   <worldbody>
@@ -35,27 +37,53 @@
     <geom name="ground" type="plane" size="3 3 .1" pos="0 0 -1" material="grid" contype="0" conaffinity="0"/>
     <geom name="target" type="sphere" pos="1 0 0" size=".05" material="target" contype="0" conaffinity="0"/>
 
-    <body name="base_link" pos="0 0 0">
-      <freejoint name="root"/>
-      <inertial pos="0.012282912365453 7.63710732790047e-05 -0.040495197986768"
+    <body name="base_link" pos="0 0 0" euler="3.14159 0 0">
+      <!-- 3DOF planar: roll/pitch/z 잠금. 수면 영법 가정 (BCF surface swimming).
+           axis 부호는 body의 euler="π,0,0" 보정해서 qpos를 world (x, y, yaw)로. -->
+      <joint name="root_x"   type="slide" axis="1 0 0"/>
+      <joint name="root_y"   type="slide" axis="0 -1 0"/>
+      <joint name="root_yaw" type="hinge" axis="0 0 -1"/>
+      <!-- PLA 강체부. 질량과 CoM은 MATLAB CG.m 검증값 그대로 (xG=xb=0, zG=0.004535).
+           CAD off-diag inertia는 임의 재질 아티팩트라 0으로 정리. -->
+      <inertial pos="0 0 0.004535"
                 mass="2.4349242520279"
-                fullinertia="0.005171 0.031671 0.029391 1.7e-05 -0.000768 -1e-06"/>
+                fullinertia="0.005171 0.031671 0.029391 0 0 0"/>
       <site name="torso" size="0.01" rgba="0 0 0 0"/>
       <geom type="mesh" mesh="base_link"/>
 
       <body name="tail_link" pos="0.144817 0 -0.03565">
-        <inertial pos="0.0714729 0.000968876 -0.0053515"
-                  quat="0.507623 0.507623 0.492259 0.492259"
-                  mass="0.0925759"
-                  diaginertia="0.000240184 0.0002 4.48156e-05"/>
-        <joint name="tail_joint" type="hinge" axis="0 0 -1" range="-0.349066 0.349066"/>
+        <!-- PLA 강체부. MODE_3 mesh와 정합되도록 새 inertial 적용 (fin 분리됨).
+             y=0, off-diag=0으로 대칭화 (CAD 임의 재질 아티팩트 제거). -->
+        <inertial pos="0.05111 0 -0.005349"
+                  mass="0.06985"
+                  diaginertia="7e-6 5.6e-5 5.4e-5"/>
+        <joint name="tail_joint" type="hinge" axis="0 0 -1" range="-0.349066 0.349066"
+               limited="true" solreflimit="0.002 1" solimplimit="0.99 0.999 0.0001"/>
         <geom pos="-0.144817 0 0.03565" type="mesh" mesh="tail_link"/>
+
+        <!-- Ecoflex 00-30 실리콘 fin. CAD MODE_3 사양 그대로 + density 1070.
+             CAD에선 fixed joint였지만 실물 실리콘이라 passive hinge로 교체.
+             stiffness/damping은 임시값, 정확성 테스트 후 튜닝. -->
+        <body name="fin_1" pos="0.057 0.00075 -0.011375">
+          <inertial pos="0.0772699 -0.0004 0.006001"
+                    mass="0.01052"
+                    diaginertia="1.8e-5 3.1e-5 1.3e-5"/>
+          <joint name="fin_joint" type="hinge" axis="0 0 -1"
+                 range="-0.524 0.524" stiffness="1e-2" damping="5e-5"
+                 limited="true" solreflimit="0.005 1" solimplimit="0.95 0.99 0.001"/>
+          <geom pos="-0.201817 -0.00075 0.047025"
+                type="mesh" mesh="fin_1"
+                density="1070" material="silicone"/>
+        </body>
       </body>
     </body>
   </worldbody>
 
   <actuator>
-    <motor name="tail" joint="tail_joint" ctrlrange="-1 1" gear="0.3"/>
+    <!-- BL4260 브러시리스 + 평기어 트레인 (continuous 영역).
+         kp/kv는 ±20° 추종 + 오버슈트 억제. forcerange는 BL4260 연속 출력. -->
+    <position name="tail" joint="tail_joint" ctrlrange="-1 1" gear="0.349"
+              kp="100" kv="5" forcerange="-3 3"/>
   </actuator>
 
   <sensor>

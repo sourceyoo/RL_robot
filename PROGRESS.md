@@ -262,10 +262,257 @@ RL_robot/
 
 ---
 
-## 8. 다음 단계 — 결정해야 할 것
+## 8. 후속 진행 — 추진 방향 문제와 시도들
 
-1. **보상함수 개선** — dm_control fish의 `tolerance` 함수 스타일로 [0,1] 보상으로 교체 (학습 효율↑)
-2. **본 학습** — 50만~100만 step (30분~1시간). viewer로 진화 관찰 + tensorboard로 수치 모니터링
-3. **추진력 보강** — gear, density 조정 (간략 우선과 약간 상충)
+> 인프라가 도는 것을 확인한 뒤, **본 학습 전에 발견한 근본 문제**와 그 해결을 위해 시도한 것들 정리.
 
-추천 순서: **보상함수 개선 → 본 학습 (viewer로 관찰)**.
+### 8.1 GitHub 업로드 (해결)
+
+- `gh` CLI 설치 → `gh auth login` (브라우저) → repo 생성 + push 완료
+- 의미 있었음: 각 단계(`gitignore` → `commit` → `repo create` → `push`)를 분리해서 진행. 이후 `CLAUDE.md`에 **단계별 진행 규칙**으로 명문화 (사용자 피드백: "테스크가 여러개일 때는 하나씩 분리되어 진행").
+
+### 8.2 학습 중 viewer race condition (해결)
+
+- 첫 `train.py`가 viewer thread에서 `model.predict`를 호출하면서 학습 thread와 PyTorch 자원을 공유 → 가끔 cuda assertion 폭주.
+- **해결 (의미 있었음): `PolicySnapshotCallback`** — 학습 thread가 500 step마다 정책을 `deepcopy().cpu().eval()`로 스냅샷, viewer thread는 그 스냅샷만 forward. race-free.
+
+### 8.3 본 문제: 꼬리 방향(-x)으로 전진 (미해결)
+
+> 꼬리를 흔들면 머리(+x) 쪽으로 가야 하는데 정책 학습 결과 꼬리(-x) 쪽으로 슬슬 밀려감.
+> 이게 **핵심 블로커**. 본 학습 들어가기 전에 해결 필요.
+
+#### 시도한 것들과 의미
+
+| # | 시도 | 결과 | 의미 |
+|---|---|---|---|
+| 1 | 모델을 x축 180° 회전 (`euler="3.14159 0 0"`) | 시각상 정상 | △ 시각만 정렬, 추진 방향은 그대로 |
+| 2 | density 5000 → **1000** (실제 물) | 추진력은 강해짐 | △ 강도만 증가, 방향은 여전히 -x |
+| 3 | 꼬리 주파수 6Hz, 진폭 ±20° 튜닝 | sine wave에서 좌우 wag 잘 됨 | ○ 꼬리 동작 자체는 의도대로 |
+| 4 | `motor` → `position` 액추에이터 (kp=50, gear=0.349) | 명령 추종성 향상 | ○ 학습 안정성에 기여 |
+| 5 | passive `tail_fin` 추가 (Ecoflex 00-30 실리콘 ellipsoid) | 꼬리 끝이 위상차로 흔들림 | ○ 모델 충실도 ↑, 추진 방향엔 무관 |
+| 6 | 사각 모터(BL4260) → 강체 가정으로 단순화 | 모델 정합성 ↑ | ○ 사용자 피드백 반영 ("실리콘은 fin만") |
+| 7 | MATLAB CG.m 값 적용 (`pos="0 0 0.004535"`, `xG=xb=0`) | G/B 정렬됨 | ◎ **실물 모델 G/B**라 의미 큼. xG=xb=0이 안정 핵심 |
+| 8 | off-diagonal 관성(ixz=0)로 정리 | — | ○ 사후 정당성 확보. 원본 CAD는 임의 재질로 질량 맞춘 거라 ixz가 인공물이었음 |
+| 9 | F1: STEP 파일 분해 → 다중 fluid ellipsoid | **z축으로 +0.56m 발산** | ✗ 롤백. fluidshape 다중화는 비대칭 lift 폭주 |
+| 10 | Zhong et al. 2026 논문(ANN data-driven) 검토 | 학계 표준 해법 확인 | ○ 추후 옵션. 실물 motion capture 필요해 지금은 부담 |
+
+**결론:** 1~8은 모델 충실도·안정성을 올렸지만 **추진 방향 부호는 못 뒤집었음**. 이는 MuJoCo `fluidshape="ellipsoid"`의 본질적 한계 (전후 대칭 ellipsoid에서 비대칭 추진력 부호가 환경 의존적).
+
+#### 가장 의미 있었던 것 (요약)
+
+1. **MATLAB CG.m 값 적용** (#7) — `xG=xb=0`은 사용자가 실물 모델 안정성을 위해 설계한 값. 이걸 시뮬에 박은 것은 sim2real 정합성에서 가장 큰 의미.
+2. **PolicySnapshotCallback** (8.2) — race-free viewer가 가능해지면서 학습 진화 관찰이 신뢰성 있게 작동.
+3. **단계 분리 규칙 명문화** (8.1) — 작업 흐름 자체가 안정됨.
+4. **off-diag 관성 정당성** (#8) — "임의 재질로 질량 맞춤"이라는 원본 CAD 사실 때문에 off-diag는 인공물 → 0 처리가 맞다는 사후 확증.
+
+#### 의미가 적었던 것
+
+- density·주파수·진폭 단순 튜닝 (#2, #3): 강도만 변할 뿐 방향 부호 문제와 무관.
+- F1 다중 ellipsoid 분해 (#9): 더 정교해 보이지만 fluid 안정성 깨져 즉시 롤백.
+
+### 8.4 현재 모델 상태 (`sim/rl_fish.xml`)
+
+- density=1000 (실제 물), viscosity=0.001, gravity 끔
+- 꼬리: position 액추에이터(±20°, 6Hz 가능) + passive Ecoflex fin
+- 관성: 실물 G/B (`pos="0 0 0.004535"`, off-diag=0)
+- 학습 파이프라인은 그대로 동작. **단, 학습 시 정책이 꼬리(-x) 방향으로 진행하는 정책을 찾음.**
+
+---
+
+## 9. 추가 진단 — 주파수 스윕, fin 비대칭, waveform 테스트
+
+> 본 학습 진입 전, "어떤 운전 조건이라면 +x로 갈 수 있는지" 체계적으로 검증.
+
+### 9.1 주파수 스윕 (sine wave, ctrl=±1)
+
+`sim/freq_sweep.py`로 0.25~6Hz 인가, 꼬리/fin 도달 각도 + body 변위 측정.
+
+| 발견 | 데이터 |
+|---|---|
+| **모든 주파수에서 +x로만 감** (저주파라도 풀리지 않음) | 0.25Hz: +0.10m, 6Hz: +1.37m |
+| **저주파(≤2.5Hz)에서 꼬리 ±24°로 오버슈트** (PD 제어 + 유체 외란) | 명령 ±20° → 실제 ±24° |
+| **고주파(≥4Hz)에서 꼬리 진폭 미달** | 6Hz에서 명령 ±20° → 실제 ±9° |
+| **passive fin이 freq별로 한쪽 쏠림** (비대칭 작동) | 0.5Hz: +35°/-1°, 3Hz: -10°/-44° |
+
+→ 사용자 가설("주파수를 낮추면 +x로 풀릴까?") **부정**.
+
+### 9.2 fin 비대칭의 원인 진단
+
+> "passive fin이 한쪽으로만 휘는" 현상이 추진 방향 문제와 연결되어 있는지 추적.
+
+**진단 1**: tail_link 관성 대칭화 (`y CoM=0`, off-diag quat 제거 = identity)
+- 결과: fin 비대칭 거의 그대로. 의미 △.
+- 다만 *원본 CAD가 임의 재질로 질량 맞춘 결과*라 off-diag는 어차피 인공물 → 정당성 확보 ◎
+
+**진단 2**: fin을 강체화 (stiffness 4e-7 → 1.0)
+- fin은 0°에 고정, body 추진 거리는 **소수점 셋째자리까지 동일** (+1.384m @ 6Hz)
+- → **fin 유연성은 추진력에 기여하지 않았음.** 강체화로 잃은 것 없이 fin 대칭만 얻음.
+
+**진단 3**: body free vs body locked vs roll/pitch만 잠금 (`freq_sweep_locked.py`, `freq_sweep_norollpitch.py`)
+- body 자유: fin 비대칭 강함
+- body 완전 고정: 고주파에선 fin 대칭(±70~93°), 저주파는 여전히 비대칭
+- roll/pitch만 잠금: 자유와 거의 동일 → **roll/pitch는 주범 아님**
+- → 비대칭의 본질 = **유체 자체의 nonlinear DC bias** (모델 한계). 어떤 stiffness/damping 튜닝으로도 못 풀음.
+
+**적용된 변경**: `tail_fin_joint stiffness 4e-7 → 1.0` (강체화). 
+- fin은 tail에 강체로 부착되어 함께 회전. World frame에서 fin 각도 = tail 각도.
+- 이로써 "fin을 ±20° 대칭으로 움직이게 하라"는 요구를 **3Hz 운전 시 자연스럽게 달성** (tail이 자연스럽게 ±20° 대칭).
+
+### 9.3 Waveform 테스트 — 어떤 패턴이 +x로 갈까?
+
+`sim/waveform_test.py`로 3Hz에서 14가지 waveform 인가, 부호 검증.
+
+| 카테고리 | 패턴 | x_disp 부호 |
+|---|---|---|
+| Baseline | 대칭 sine, square wave | + (후진) |
+| DC offset | ±0.3, ±0.6 | + (후진) |
+| 2nd harmonic | sin±0.3·sin(2x), quadrature | + (후진) |
+| 비대칭 stroke | fast+/slow-, fast-/slow+ | + (후진) |
+| Burst-and-coast | 0.5초 진동 + 0.5초 정지 | + (후진, 거리 감소) |
+| 정지 ref | ctrl=0 | 0 |
+
+**14가지 모두 +x.** DC offset 부호를 뒤집어도 y만 반대로 갈 뿐 x는 동일. **단일 관절로는 어떤 waveform이든 -x 추진 불가능.**
+
+→ CPG/Fourier 액션공간으로 SAC 학습해도 **학습할 +x 패턴이 애초에 존재하지 않음.** 시나리오 (b) 확정.
+
+### 9.4 학계 사례 조사 — 우리 진단 검증
+
+웹 검색으로 비슷한 사례 + 우리 문제와의 비교 정리.
+
+| 출처 | 우리 문제와의 관련성 |
+|---|---|
+| **MDPI Sensors 2026 종합 review** | *"passive fin can hijack control"*, *"simplified hydrodynamic models cannot capture vortex shedding"* — **우리가 본 현상을 학계가 그대로 인정** |
+| **DeepMind dm_control fish** | 같은 ellipsoid fluid model. 단 다중 관절(꼬리 2단 + 가슴지느러미 4 DOF). **단일 관절은 dm_control에도 없음** |
+| **FishSim (ETH-SRL)** | MuJoCo + 다중 관절 tendon-driven + system identification. 실측 마커로 5개 fluid coef 역최적화 |
+| **Bio-mimetic Fish E2E DRL (arXiv 2506)** | 3-link + 2D CFD + sine wave **pretraining 후** RL 미세조정 ← 정공법 |
+| **Zhong et al. 2026 (Ocean Eng)** | ANN surrogate로 dynamics 학습. MuJoCo 한계 우회. 단 실물 motion capture 필요 |
+
+→ 학계 컨센서스: **single-joint는 wave-thrust 학습이 본질적으로 어려움**, multi-joint가 표준.
+
+---
+
+## 10. 결정해야 할 것 — 진짜 갈림길
+
+진단 결과 단일 관절 + ellipsoid fluid model 조합으로는 **어떤 ctrl 패턴으로도 +x 추진 불가능**. 모델 변경이 필수.
+
+| 길 | 작업량 | 의미 | sim2real |
+|---|---|---|---|
+| **A. 꼬리 2~3 마디 분절** | 중 | 학계 표준. wave-thrust 학습 가능해짐 | 강 |
+| **B. Mesh x-mirror** | 소 | 시각만 뒤집기. "후진"이 시각상 "전진" | 약 |
+| **C. 보상함수에서 +x 강제** | 소 | 학습 편법. 정책이 비물리적 +x 정책 찾을 가능성 | 약 |
+| **D. ANN surrogate (Zhong)** | 대 | 정공법. 실물 motion capture 데이터 필요 | 강 |
+
+**추천 = A.** 사용자 직관(유연한 꼬리가 wave 만들어 추진)과 학계 권고가 일치. 진행 시:
+1. tail_link를 2~3 segment로 분절 (각 마디에 active hinge)
+2. 액션공간 1D → 2~3D
+3. fish_env.py 수정
+4. Sine wave traveling pattern으로 빠른 검증 (각 segment에 phase 차이 둔 sine)
+5. 검증 후 SAC 학습
+
+---
+
+## 11. 현재 모델 상태 (`sim/rl_fish.xml`)
+
+- density=1000, viscosity=0.001, gravity 끔
+- 꼬리: position 액추에이터 (±20° 명령, kp=50, gear=0.349, forcerange ±3)
+- **fin 강체화** (stiffness=1.0, damping=0.001) — passive Ecoflex 가정 포기
+- 관성 대칭화: tail_link `y CoM=0`, off-diag quat 제거
+- base_link 관성: 실물 G (`pos="0 0 0.004535"`, off-diag=0)
+- 학습 파이프라인 정상 동작. **단, 정책이 꼬리(-x = world +x) 방향 진행 정책을 학습.**
+
+## 12. 진단 스크립트 일람 (`sim/`)
+
+- `freq_sweep.py` — 주파수 스윕 + body roll/pitch/yaw 로깅
+- `freq_sweep_locked.py` — body 강제 고정 (qvel[0:6]=0)
+- `freq_sweep_norollpitch.py` — roll/pitch만 잠금
+- `waveform_test.py` — 14가지 waveform 부호 검증
+- `multiseg_test.py` — 다단 passive fin 응답
+
+---
+
+## 13. 돌파 — MODE_3 모델 + 3DOF planar로 +x 추진 달성 (2026-05-02)
+
+> 단일 관절 한계 진단 후, **CAD 정확성 + 운동 차원 축소**로 +x 추진 부호 뒤집기 성공.
+
+### 13.1 MODE_3 CAD 모델 도입 (`fish_urdf/RL_SIM_MODE_3_description/`)
+
+이전(MODE_2)에는 fin이 CAD에 없어 우리가 placeholder ellipsoid로 임의 추가. MODE_3 도입으로 fin이 정식 메쉬(`fin_1.stl`)로 분리됨.
+
+| body | mass | 출처 | 비고 |
+|---|---|---|---|
+| base_link | 2.4349 kg | MATLAB CG.m (그대로 유지) | PLA, CoM=(0,0,0.004535), 대칭 inertia |
+| tail_link | **0.0699 kg** | MODE_3 새 사양 (fin 분리됨) | PLA, CoM=(0.0511,0,-0.005349), 대칭화 |
+| fin_1 | 0.01052 kg | MODE_3 CAD | **Ecoflex 00-30 (density=1070)**, passive hinge |
+
+총 질량 2.515 kg. 시뮬 NaN 없음.
+
+### 13.2 BL4260 + 평기어 트레인 모터 사양 적용
+
+```xml
+<position name="tail" joint="tail_joint" ctrlrange="-1 1" gear="0.349"
+          kp="100" kv="5" forcerange="-3 3"/>
+```
+
+- Peak 토크 ~3 Nm (BL4260 connect + 기어 감속 후 continuous 영역)
+- kp/kv는 ±20° 추종 + 오버슈트 억제 균형
+- 이전 시도(kp=200, ±6 Nm)는 tail이 ±44°까지 오버슈트했으나 현재는 ±21~23°로 안정.
+
+### 13.3 6DOF freejoint → 3DOF planar 결정적 변경
+
+문제: yaw 진동이 cross-coupling으로 pitch 자세 변화 유발 (최대 +67° → 물고기가 옆으로 누움). 모든 파라미터 조정해도 본질적으로 안 사라짐.
+
+**해법 = freejoint 제거 + 3DOF 명시 joint**:
+
+```xml
+<joint name="root_x"   type="slide" axis="1 0 0"/>      <!-- world x -->
+<joint name="root_y"   type="slide" axis="0 -1 0"/>     <!-- world y -->
+<joint name="root_yaw" type="hinge" axis="0 0 -1"/>     <!-- world yaw -->
+```
+
+- z, roll, pitch는 *수학적으로* 잠김 (constraint solver 강제)
+- 표면 영법 가정 (BCF surface swimming) — fish RL 학계 표준
+- qpos 차원: 9 → 5 (학습 효율 ↑)
+
+### 13.4 추진 방향 부호 뒤집기 — 압도적 결과
+
+`freq_sweep.py`로 1~6Hz sine wave 인가:
+
+| f[Hz] | tail | fin | x_disp | y_disp | yaw | 방향 |
+|---|---|---|---|---|---|---|
+| 0.5 | ±21° | ±31° | +0.85 | 0 | 0 | 후진 |
+| **1.0** | ±21° | ±32° | **−0.49** | 0 | 0 | **전진 ✓** |
+| **2.0** | ±22° | ±33° | **−1.72** | −0.04 | +2° | **전진 ✓** |
+| **3.0** | ±23° | ±31° | **−2.17** | −0.14 | +6° | **전진 ✓** |
+| **4.0** | ±23° | ±29° | **−2.66** | −0.18 | +6° | **전진 ✓** |
+| **5.0** | ±21° | ±28° | **−3.00** | −0.43 | +12° | **전진 ✓** |
+| **6.0** | ±23° | ±28° | **−3.36** | −0.58 | +14° | **전진 ✓** |
+
+(12초 측정. x_disp < 0 = 머리 방향 = 전진)
+
+- **1~6 Hz 모든 주파수에서 +x 머리 방향 전진** ✓
+- **6 Hz: 0.28 m/s** 전진 — 실제 소형 robotic fish 영역 (0.1~0.5 m/s)
+- tail/fin 진폭 정상 (±21~33°)
+
+### 13.5 결정적이었던 변경점 (회고)
+
+| 변경 | 효과 | 비고 |
+|---|---|---|
+| **CAD MODE_3 fin 사양 적용** | fin 형상/관성 정확 | placeholder → 실 사양 |
+| **6DOF → 3DOF planar** | pitch wobble 제거, 부호 뒤집힘 | 학계 표준 가정 |
+| BL4260 + 기어 모터 사양 | tail 추종성 | continuous 영역 |
+| Ecoflex 사양 (density=1070) | wave-thrust 발생 | 강체 fin과 차별화 |
+| MATLAB CG.m 값 유지 | 안정성 | xG=xb=0 |
+
+가장 본질적이었던 것은 **3DOF planar 가정**. 단일 관절 + ellipsoid fluid model의 부호 문제는 6DOF에선 안 풀렸지만 3DOF planar에선 자연스럽게 +x로 정렬됨.
+
+### 13.6 잔여 이슈 (학습으로 보정 가능)
+
+- yaw 누적: 6Hz에서 +14° (fluid asymmetry 잔여) — RL 정책이 좌우 균형 학습으로 보정
+- y_disp 누적: 동일 메커니즘
+- 0.5 Hz는 후진 — 저주파에선 wave-thrust 약하므로 학습이 1~6Hz 영역 선호하도록 자연 학습
+
+### 13.7 다음 단계
+
+- `fish_env.py`를 5-DOF qpos layout으로 갱신
+- SAC smoke test (학습 파이프라인 작동 확인)
+- 본 학습 50만 step

@@ -13,6 +13,7 @@ viewer가 필요 없으면 --no-viewer.
 from __future__ import annotations
 
 import argparse
+import copy
 import threading
 import time
 from pathlib import Path
@@ -20,6 +21,7 @@ from pathlib import Path
 import mujoco
 import mujoco.viewer
 from stable_baselines3 import SAC
+from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.monitor import Monitor
@@ -27,14 +29,32 @@ from stable_baselines3.common.monitor import Monitor
 from fish_env import FishSwimEnv
 
 
+class PolicySnapshotCallback(BaseCallback):
+    """매 sync_every step마다 model.policy를 deepcopy해서 viewer thread가 쓸
+    snapshot으로 model_holder에 둔다. 학습 thread와 viewer thread 사이의
+    PyTorch race condition을 피하기 위함."""
+
+    def __init__(self, model_holder: dict, sync_every: int = 500):
+        super().__init__()
+        self.model_holder = model_holder
+        self.sync_every = sync_every
+
+    def _on_step(self) -> bool:
+        if self.n_calls % self.sync_every == 0:
+            snap = copy.deepcopy(self.model.policy).cpu().eval()
+            self.model_holder["policy"] = snap
+        return True
+
+
 def make_env():
     return Monitor(FishSwimEnv())
 
 
 def start_viewer_thread(model_holder: dict, stop_event: threading.Event) -> threading.Thread:
-    """별도 thread에서 viewer를 띄우고 model_holder['model']로 매 step rollout.
+    """별도 thread에서 viewer를 띄우고 model_holder['policy'] (deepcopy 스냅샷)로 rollout.
 
-    학습 thread가 model_holder['model']을 업데이트할 때마다 자동으로 최신 정책 사용.
+    snapshot은 학습 thread의 callback이 매 N step마다 갱신.
+    snapshot이 아직 없으면(=학습 초기 N step 미만) random action.
     """
     eval_env = FishSwimEnv()
     state = {"obs": eval_env.reset()[0], "ep": 1, "ep_reward": 0.0, "step": 0}
@@ -45,20 +65,14 @@ def start_viewer_thread(model_holder: dict, stop_event: threading.Event) -> thre
             last_print = time.time()
             while v.is_running() and not stop_event.is_set():
                 t0 = time.time()
-                m = model_holder.get("model")
-                try:
-                    if m is None:
-                        action = eval_env.action_space.sample()
-                    else:
-                        action, _ = m.predict(state["obs"], deterministic=False)
-                    state["obs"], r, term, trunc, info = eval_env.step(action)
-                    state["ep_reward"] += r
-                    state["step"] += 1
-                except Exception as e:
-                    # 학습 중 weights 동시 접근으로 드물게 예외 — 무시하고 다음 frame
-                    print(f"[viewer] 예외 무시: {e!r}")
-                    time.sleep(0.05)
-                    continue
+                snap = model_holder.get("policy")
+                if snap is None:
+                    action = eval_env.action_space.sample()
+                else:
+                    action, _ = snap.predict(state["obs"], deterministic=False)
+                state["obs"], r, term, trunc, info = eval_env.step(action)
+                state["ep_reward"] += r
+                state["step"] += 1
 
                 v.sync()
 
@@ -120,21 +134,21 @@ def main():
         learning_starts=1_000,
     )
 
-    # 학습 중 viewer thread
+    # 학습 중 viewer thread (정책 snapshot 방식, race-free)
     viewer_thread = None
     stop_event = threading.Event()
-    model_holder = {"model": None}
+    model_holder = {"policy": None}
+    callbacks = None
 
     if not args.no_viewer:
         viewer_thread = start_viewer_thread(model_holder, stop_event)
         time.sleep(1.0)  # viewer가 뜰 시간 확보
-        model_holder["model"] = model
-        print(f"[train] {args.steps} step 학습 시작. viewer에서 정책이 점점 진화하는 모습 관찰 가능.")
+        callbacks = PolicySnapshotCallback(model_holder, sync_every=500)
+        print(f"[train] {args.steps} step 학습 시작. viewer 정책은 500 step마다 갱신.")
 
     try:
-        model.learn(total_timesteps=args.steps, progress_bar=True)
+        model.learn(total_timesteps=args.steps, progress_bar=True, callback=callbacks)
     finally:
-        # viewer thread는 학습 끝나면 정리
         if viewer_thread is not None:
             stop_event.set()
 
