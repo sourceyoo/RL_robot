@@ -4,48 +4,95 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 목적
 
-MuJoCo 기반 물고기 로봇의 강화학습. 현재 저장소에는 시뮬레이션 에셋만 있고 Python 학습 코드, 빌드 시스템, 테스트는 아직 **없습니다**. 앞으로 추가될 작업은 대체로 `robotic_fish.xml`을 로드해 Gym/Gymnasium 환경으로 감싸고 정책을 학습시키는 Python 패키지가 될 것입니다.
+KUFIsh_III (사용자 자체 CAD) 기반 단일 관절 물고기 로봇의 강화학습. MuJoCo + SAC + Gymnasium. **수면 영법(BCF surface swimming) 가정**으로 단순화하여 학습.
 
-## 저장소 구성
+## 활성 모델 — `sim/rl_fish.xml`
 
-서로 **독립적인 두 개의 모델링 스택**이 공존합니다. 한쪽을 수정해도 다른 쪽에 반영되지 않습니다.
+RL이 학습하는 단 하나의 모델. **이 파일이 모든 시뮬·학습의 진입점.**
 
-### 1. MuJoCo 모델 — `robotic_fish.xml` (RL 학습 대상)
+### 핵심 사실 (한눈에 안 보이는 것들)
 
-RL이 실제로 사용할 모델입니다. 한눈에 보이지 않는 중요한 사실들:
+- **3DOF planar 운동**. base_link는 freejoint가 아니라 `slide_x` + `slide_y` + `hinge_yaw` 3개 명시 joint. roll/pitch/z는 *수학적으로 잠김*. **freejoint로 바꾸지 마세요** — pitch wobble로 추진 방향이 뒤집힙니다 (PROGRESS.md 13장 참고).
+- **qpos layout = 5**: `[root_x, root_y, root_yaw, tail_joint, fin_joint]`. env 코드의 인덱스가 이 순서에 의존.
+- **수중 환경**. `<option density="1000" viscosity="0.001">`(실제 물). `<flag gravity="disable"/>`로 중력 끔. 부력은 명시적 안 받지만 added mass + drag는 `fluidshape="ellipsoid"`로 자동. **중력 켜지 마세요** — 별도 부력 콜백 없으면 가라앉음.
+- **euler="3.14159 0 0" + axis 부호 보정**. base_link가 x축 180° 회전된 상태로 시작(시각 상 위쪽 정렬). 이 회전을 보상하기 위해 planar joint 축이 `(1,0,0)`, `(0,-1,0)`, `(0,0,-1)`. qpos는 *world* 좌표 (x, y, yaw)와 1:1.
+- **추진 방향 규약: world −x = 머리 방향(전진).** freq_sweep에서 x_disp < 0이면 전진. 보상 함수 작성 시 *목표 위치를 머리 방향(−x)에 두기*.
 
-- **수중 물리 환경, 공기 중이 아님.** `<option density="5000">`이 물 같은 매질을 시뮬레이션하고 `<flag gravity="disable" .../>`로 중력이 꺼져 있습니다. 부력/항력은 명시적인 힘이 아니라 이 고밀도 매질에서 비롯됩니다. 꺼진 중력을 "버그"로 보고 켜지 마세요.
-- **include 경로는 상대 경로.** `./common/visual.xml`과 `./common/materials.xml`을 끌어옵니다. skybox는 인라인으로 선언되어 있고, 별도의 `common/skybox.xml`은 사용되지 않습니다. `robotic_fish.xml`을 옮기면 이 경로들도 같이 수정해야 합니다.
-- **관절 구조:** torso(free joint) → 2단 꼬리 (`tail1` hinge + `tail_twist` hinge → `tail2` hinge, 끝단은 passive stiffness), 양쪽 가슴지느러미는 각각 `roll` + `pitch`. 두 지느러미의 roll은 `<tendon>` 두 개 (`fins_flap` 반대칭, `fins_sym` 대칭+stiffness)로 묶여 있습니다.
-- **액션 공간 (5개 position 액추에이터, 모두 ctrlrange `-1..1`):** `tail`, `tail_twist`, `fins_flap` (tendon, 반대칭 펄럭임), `finleft_pitch`, `finright_pitch`. 좌/우 지느러미의 **roll**은 직접 구동되지 않고 **오직 `fins_flap` tendon을 통해서만** 움직입니다.
-- **센서:** `torso` site에 `velocimeter`와 `gyro`. `target` 구는 `(0, 0.4, 0.1)`에 위치하며, 목표 지점 도달형 보상의 기준점입니다.
-- **카메라:** `tracking_top`, `tracking_x`, `tracking_y`, `fixed_top`, 그리고 1인칭 `eye`. 학습 영상 로깅에 유용합니다.
+### 관절 구조 + 액추에이터
 
-이 모델은 DeepMind Control Suite의 "fish" 태스크와 거의 동일한 구조입니다. 관측/보상을 설계할 때 그쪽 코드가 좋은 레퍼런스입니다.
+```
+world ─[slide_x][slide_y][hinge_yaw]─ base_link (PLA 강체)
+                                       ├ tail_joint (active hinge, ±20°)
+                                       │   └ tail_link (PLA 강체)
+                                       │       └ fin_joint (passive hinge, ±30°)
+                                       │           └ fin_1 (Ecoflex 00-30, density 1070)
+```
 
-### 2. URDF / Gazebo / ROS 패키지 — `fish_urdf/RL_SIM_MODE_2_description/`
+- **액션 공간 = 1차원** (단일 motor): `position` actuator on `tail_joint`. ctrlrange `-1..1`, gear=0.349 → 명령 ±20°. kp=100, kv=5, forcerange=±3 Nm (BL4260 + 평기어 트레인 continuous 영역).
+- **fin_joint는 passive**. stiffness=1e-2, damping=5e-5. RL이 명령하지 않음.
 
-Fusion 360에서 `fusion2urdf`로 내보낸 별도의 단순 모델입니다. 움직이는 관절은 **딱 하나**: `tail_joint` (revolute, ±0.349 rad). ROS launch 파일들 (`display.launch`, `gazebo.launch`, `controller.launch`)과 catkin/CMake 패키지 골격을 포함합니다.
+### Inertial 값의 출처
 
-**깨진 파일:** `launch/controller.yaml`과 `launch/controller.launch`에는 한국어 관절명 "회전 3"이 CP949로 저장되어 mojibake (`ȸ�� 3`)로 보입니다. 게다가 URDF의 실제 관절명인 `tail_joint`와도 일치하지 않습니다. 그대로는 ros_control이 동작하지 않습니다 — 인코딩 수정 *그리고* `tail_joint`로 이름 변경이 모두 필요합니다.
+| body | mass | CoM | 출처 |
+|---|---|---|---|
+| base_link | 2.4349 kg | (0, 0, 0.004535) | **MATLAB CG.m 검증값** (xG=xb=0, zG=0.004535). CAD URDF의 off-diag inertia는 임의 재질 인공물이라 0으로 정리. |
+| tail_link | 0.0699 kg | (0.0511, 0, -0.005349) | MODE_3 URDF, y CoM=0으로 대칭화 |
+| fin_1 | 0.01052 kg | (0.0773, -0.0004, 0.006) | MODE_3 URDF, density=1070 (Ecoflex) |
 
-이 스택은 **RL 학습 대상이 아닙니다**. RViz/Gazebo 데모용으로 보존된 CAD export로 보세요. RL을 얹어달라는 요청이 오면 ROS를 거치지 말고 형상 정보만 MuJoCo로 옮기세요.
+**임의로 수정 마세요**. base는 사용자 실물 측정값, 나머지는 사용자 합의 후 대칭화한 것.
+
+## CAD 소스 — `fish_urdf/RL_SIM_MODE_3_description/`
+
+활성 mesh의 출처. URDF는 *형상만* 사용 (mesh 파일들), inertial 값은 위 표대로 별도 검증.
+
+- mesh: `base_link.stl`, `tail_link_1_1.stl`, `fin_1.stl`
+- URDF는 fin을 `<joint type="fixed">`로 부착하지만 우리 MJCF는 **passive hinge로 교체** (실리콘 변형 모델링).
+- 이전 버전(`RL_SIM_MODE_2_description/`)도 남아있지만 **사용 안 함** — fin 분리 안 된 구버전.
+
+### MODE_2 패키지 깨진 파일 (참고)
+
+`launch/controller.yaml`, `launch/controller.launch`에 한국어 관절명이 CP949 mojibake (`ȸ�� 3`). URDF 실제 관절명 `tail_joint`와도 다름. ros_control 안 돌아감. **수정 안 해도 RL 학습엔 무관** (URDF만 mesh 출처로 사용).
+
+## Python 학습 인프라 — `sim/`
+
+- `fish_env.py` — Gymnasium 환경. obs 차원 = 7 (x, y, yaw, tail_qpos, tail_qvel, fin_qpos, target 상대좌표) — *5DOF에 맞춰 갱신 필요*.
+- `train.py` — SAC 학습 + 별도 thread viewer. PolicySnapshotCallback으로 race-free.
+- `view_policy.py` — 저장된 정책을 viewer로 rollout.
+- 진단 스크립트: `freq_sweep.py`, `freq_sweep_locked.py`, `freq_sweep_norollpitch.py`, `waveform_test.py`, `multiseg_test.py`. 추진 방향·대칭성 검증용.
+
+### 학습 명령
+
+```bash
+cd sim
+python3 train.py --steps 20000 --tag smoke    # 5~10분 시운전
+python3 train.py                               # 본 학습 50만 step (~30분~1시간)
+python3 train.py --no-viewer                   # viewer 없이 빠르게
+python3 view_policy.py runs/<tag>/model.zip    # 저장된 정책 보기
+python3 -m mujoco.viewer --mjcf=rl_fish.xml    # 모델만 검수
+tensorboard --logdir runs/                     # 학습 곡선
+```
 
 ## 작업 진행 규칙 — 한 단계씩 분리
 
-다단계 작업은 **한 단계씩 분리해서** 진행한다. 한 단계 결과를 보고하고 사용자 확인을 받은 뒤 다음으로 넘어간다.
+다단계 작업은 **한 단계씩 분리해서** 진행. 한 단계 결과를 보고하고 사용자 확인을 받은 뒤 다음으로 넘어간다.
 
 - "한 단계"의 단위는 **사용자가 결과를 보고 다음 결정을 내릴 수 있는 지점**.
-- 예: 의존성 설치 → 멈춤. URDF 로드 검증 → 멈춤. MJCF 작성 → 멈춤. .gitignore 작성 → 멈춤. commit → 멈춤. push → 멈춤.
-- TaskCreate로 전체 단계를 미리 나열해 두는 건 OK (전체 그림 표시). 하지만 status는 한 번에 한 task만 in_progress.
-- 자명하게 묶이는 미세 작업(같은 파일 수정 + 같은 줄 검증)은 굳이 쪼개지 않아도 된다. 핵심은 **사용자가 검수·중단할 기회를 주는 것**.
-- 결정·규칙은 md 파일(이 CLAUDE.md 또는 PROGRESS.md)에 명시해 미래 세션도 같은 방식으로 동작하게 한다.
+- 예: 모델 변경 → 멈춤. viewer 검증 → 멈춤. 정확성 테스트 → 멈춤. env 갱신 → 멈춤. smoke test → 멈춤.
+- TaskCreate로 전체 단계를 미리 나열해 두는 건 OK. status는 한 번에 한 task만 in_progress.
+- 자명하게 묶이는 미세 작업(같은 파일 수정 + 같은 줄 검증)은 쪼개지 않아도 됨. 핵심은 **사용자가 검수·중단할 기회를 주는 것**.
 
-## 알아둘 컨벤션
+## 알아둘 함정 (이미 발견·해결된 것)
 
-- `common/materials.xml`의 `self_highlight`, `target_highlight` 같은 오버라이드 머티리얼은 보상 이벤트 발생 시 색을 바꿔 시각화하는 용도입니다. 학습 중 시각화를 추가할 때 이름 규칙을 유지하세요.
-- `robotic_fish.xml`은 `<default class="fish">`로 관절 기본값(damping, range, solver 파라미터)을 잡아둡니다. 새 body를 추가할 때 `childclass="fish"`를 지정해야 상속됩니다. 안 그러면 같은 모양이라도 물리 동작이 조용히 달라집니다.
+이미 시도해본 막다른 길. **반복하지 마세요** (PROGRESS.md에 상세 기록).
 
-## RL 코드를 새로 추가할 때
+1. **6DOF freejoint**: yaw 진동의 pitch cross-coupling으로 fish가 60° 기울며 추진 방향 뒤집힘. → 3DOF planar로 결정.
+2. **fluidshape 변경 시도**: MuJoCo는 `none`/`ellipsoid` 둘뿐. 다른 도형 없음.
+3. **단일 passive fin (k=4e-7)**: 1자유도 spring은 wave 못 만듦. 단일 passive vs 강체 fin 추진 동일 (소수점 셋째 자리까지).
+4. **다단 passive fin (segment chain)**: wave 패턴은 발생하지만 ellipsoid fluid 한계로 +x 추진은 못 만듦. MODE_2 시절 14가지 waveform 모두 후진.
+5. **CPG/Fourier 액션공간**: 단일 관절 본질적 한계 — 학습할 +x 패턴이 모델에 존재하지 않음.
 
-`requirements.txt`, `pyproject.toml`, 학습 진입점이 아직 없습니다. 첫 학습 스크립트를 만들 때 같이 정립하세요. 모델은 작아서 별도 전처리 없이 `mujoco.MjModel.from_xml_path("robotic_fish.xml")`로 바로 로드 가능합니다.
+## RL 학습 시 주의
+
+- **fluidshape="ellipsoid" 한계 인지**. vortex shedding을 못 모델하므로 sim2real에 본질적 격차. 추후 개선은 Lighthill slender body theory 콜백(`mjcb_passive`) 또는 ANN surrogate (Zhong 2026 방식).
+- **보상 함수의 forward 방향**: world −x. 학습 정책이 +x로 가면 보상 부호 또는 환경 인덱스 잘못된 것.
+- **3DOF planar에서 yaw 누적**: fluid asymmetry 잔여로 한쪽으로 도는 경향. RL이 좌우 균형 학습으로 보정 가능. 단 yaw가 많이 누적되면 보상 하락 → 학습이 자연 보정.
