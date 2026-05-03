@@ -12,7 +12,8 @@ qvel layout (5): [vx, vy, vyaw, vtail, vfin]
 
 행동 (1차원): tail motor ctrl ∈ [-1, 1].
 
-보상: progress(거리 감소) × 10 + reached_bonus - ctrl_cost.
+보상: progress(거리 감소) × 10 + reached_bonus - ctrl_cost + align_w × cos(머리-목표).
+align term은 multi-modal head-arc 학습에서 회전 방향 신호로 작용.
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ class FishSwimEnv(gym.Env):
         target_radius: float = 0.5,
         success_radius: float = 0.08,
         target_theta_range: tuple[float, float] = (-np.pi, np.pi),
+        align_weight: float = 0.02,
         render_mode: str | None = None,
     ):
         super().__init__()
@@ -52,6 +54,7 @@ class FishSwimEnv(gym.Env):
         self.target_radius = target_radius
         self.success_radius = success_radius
         self.target_theta_range = target_theta_range  # curriculum용 목표 각도 범위
+        self.align_weight = align_weight                # head-target 정렬 보상 가중치
         self.render_mode = render_mode
         self._renderer: mujoco.Renderer | None = None
 
@@ -133,7 +136,21 @@ class FishSwimEnv(gym.Env):
         progress = self._prev_distance - distance
         ctrl_cost = 0.001 * float(np.square(self.data.ctrl).sum())
         reached = distance < self.success_radius
-        reward = float(progress * 10.0) + (5.0 if reached else 0.0) - ctrl_cost
+
+        # Yaw alignment: 머리 방향(yaw=0이면 world -x)이 목표를 얼마나 향하는가.
+        # head_dir = R(-yaw)·(-1,0) = (-cos(yaw), sin(yaw))  (axis (0,0,-1) 보정 반영)
+        yaw = float(self.data.qpos[IDX_YAW])
+        head_dir = np.array([-np.cos(yaw), np.sin(yaw)])
+        rel = self._target_pos()[:2] - self._torso_pos()[:2]
+        rel_norm = float(np.linalg.norm(rel))
+        align = float(np.dot(head_dir, rel / rel_norm)) if rel_norm > 1e-6 else 0.0
+
+        reward = (
+            float(progress * 10.0)
+            + (5.0 if reached else 0.0)
+            - ctrl_cost
+            + self.align_weight * align
+        )
 
         self._prev_distance = distance
         self._step_count += 1
@@ -141,7 +158,7 @@ class FishSwimEnv(gym.Env):
         terminated = bool(reached)
         truncated = self._step_count >= self.max_steps
 
-        info = {"distance": distance, "reached": reached}
+        info = {"distance": distance, "reached": reached, "align": align}
         return self._get_obs(), reward, terminated, truncated, info
 
     def render(self):

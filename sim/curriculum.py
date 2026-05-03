@@ -37,27 +37,36 @@ from train import (
 )
 
 
+PI = math.pi
+
 STAGES = [
     {
         "tag": "s1_forward",
         "desc": "Stage 1 — 직진 (target θ=π fixed)",
-        "theta_min": math.pi, "theta_max": math.pi,
+        "theta_min": PI, "theta_max": PI,
         "success_radius": 0.08,
         "max_steps": 400_000,
     },
     {
         "tag": "s2_anchor",
         "desc": "Stage 2 — 안착 (success_radius 0.04)",
-        "theta_min": math.pi, "theta_max": math.pi,
+        "theta_min": PI, "theta_max": PI,
         "success_radius": 0.04,
         "max_steps": 400_000,
     },
     {
-        "tag": "s3_head_arc",
-        "desc": "Stage 3 — 머리쪽 호 (θ ∈ [π/2, 3π/2])",
-        "theta_min": math.pi / 2, "theta_max": 3 * math.pi / 2,
+        "tag": "s3a_arc15",
+        "desc": "Stage 3a — 좌우 ±15° (θ ∈ π ± π/12)",
+        "theta_min": PI - PI / 12, "theta_max": PI + PI / 12,
         "success_radius": 0.08,
-        "max_steps": 600_000,
+        "max_steps": 300_000,
+    },
+    {
+        "tag": "s3b_arc90",
+        "desc": "Stage 3b — 좌우 ±90° (θ ∈ [π/2, 3π/2], 전체 head arc)",
+        "theta_min": PI / 2, "theta_max": 3 * PI / 2,
+        "success_radius": 0.08,
+        "max_steps": 500_000,
     },
 ]
 
@@ -82,8 +91,9 @@ def main():
     sim_dir = Path(__file__).parent
     runs_dir = sim_dir / "runs"
     plot_dir = sim_dir / "plots"
-    # 모든 단계의 tensorboard log를 한 디렉토리에 통합 → TB UI에서 stage 이름으로 비교 가능
-    tb_dir = sim_dir / "tb_logs"
+    # 모든 단계의 tensorboard log를 model3_vN 폴더 안에 묶어 TB UI에서 v별 비교 가능.
+    # 새 학습 시작할 때마다 v숫자를 올려도 되고, 같은 v 안에서 stage 진행도 가능.
+    tb_dir = sim_dir / "tb_logs" / "model3_v2"
     tb_dir.mkdir(parents=True, exist_ok=True)
 
     # Viewer thread 단 한 번만 — 첫 stage env로 시작, 모든 stage 통과
@@ -137,6 +147,7 @@ def main():
                     learning_rate=3e-4, buffer_size=200_000, batch_size=256,
                     tau=0.005, gamma=0.99, train_freq=1, gradient_steps=1,
                     learning_starts=1_000,
+                    ent_coef="auto_0.1",  # entropy 초기값 0.1 (collapse 늦춤)
                 )
 
             callbacks = []

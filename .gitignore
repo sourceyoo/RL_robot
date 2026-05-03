@@ -13,6 +13,7 @@ sim/plots/
 sim/tb_logs/
 *.zip
 events.out.tfevents.*
+*.log
 
 # MuJoCo 자동 로그
 MUJOCO_LOG.TXT

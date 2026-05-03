@@ -57,32 +57,66 @@ class PolicySnapshotCallback(BaseCallback):
 
 
 class CurriculumStopCallback(BaseCallback):
-    """완료된 에피소드의 reached 비율이 threshold 이상이면 학습 조기 종료.
+    """에피소드 통계를 추적해 (1) 직관적 메트릭을 TB에 기록하고 (2) reach_rate가
+    threshold 이상이면 학습을 조기 종료한다.
 
-    rolling window (최근 N 에피소드)에서 평균 도달률 측정.
-    min_steps 이전엔 조기 종료 안 함 (충분히 학습 후 평가).
-    threshold=0이면 비활성 (정해진 step까지 학습).
+    TB에 기록하는 metric (`fish/` namespace):
+      - fish/success_rate    최근 N ep 도달률 (0~1)
+      - fish/final_distance  최근 N ep 평균 종료 거리 (m)
+      - fish/episode_seconds 최근 N ep 평균 ep 길이 (초, ep_len * dt)
+      - fish/avg_align       최근 N ep 평균 정렬도 (-1~+1, 종료 시점)
+
+    threshold=0이면 조기 종료 비활성 (정해진 step까지 학습).
     """
 
     def __init__(self, threshold: float = 0.9, window: int = 100,
-                 check_every: int = 5000, min_steps: int = 30_000, verbose: int = 1):
+                 check_every: int = 5000, min_steps: int = 30_000,
+                 dt: float = 0.02, verbose: int = 1):
         super().__init__(verbose)
         self.threshold = threshold
         self.window = window
         self.check_every = check_every
         self.min_steps = min_steps
+        self.dt = dt
         self.recent_reached: collections.deque = collections.deque(maxlen=window)
+        self.recent_distances: collections.deque = collections.deque(maxlen=window)
+        self.recent_lengths: collections.deque = collections.deque(maxlen=window)
+        self.recent_aligns: collections.deque = collections.deque(maxlen=window)
         self.last_check = 0
 
     def _on_step(self) -> bool:
-        if self.threshold <= 0:
-            return True
         infos = self.locals.get("infos", [])
         dones = self.locals.get("dones", [])
+        ep_ended = False
         for info, done in zip(infos, dones):
             if done:
-                reached = bool(info.get("reached", False))
-                self.recent_reached.append(1.0 if reached else 0.0)
+                ep_ended = True
+                self.recent_reached.append(1.0 if info.get("reached", False) else 0.0)
+                self.recent_distances.append(float(info.get("distance", 0.0)))
+                self.recent_aligns.append(float(info.get("align", 0.0)))
+                # SB3 Monitor가 ep 길이를 info["episode"]["l"]로 자동 채움
+                ep_block = info.get("episode")
+                if ep_block is not None:
+                    self.recent_lengths.append(float(ep_block.get("l", 0.0)))
+
+        # ep 종료 시점에 TB 메트릭 갱신 (학습 부담 최소)
+        if ep_ended and self.recent_reached:
+            n = len(self.recent_reached)
+            self.logger.record("fish/success_rate",
+                               sum(self.recent_reached) / n)
+            self.logger.record("fish/final_distance",
+                               sum(self.recent_distances) / len(self.recent_distances))
+            self.logger.record("fish/avg_align",
+                               sum(self.recent_aligns) / len(self.recent_aligns))
+            if self.recent_lengths:
+                self.logger.record(
+                    "fish/episode_seconds",
+                    (sum(self.recent_lengths) / len(self.recent_lengths)) * self.dt,
+                )
+
+        # 조기 종료 체크 (threshold > 0일 때만)
+        if self.threshold <= 0:
+            return True
         if self.num_timesteps < self.min_steps:
             return True
         if self.n_calls - self.last_check >= self.check_every:
@@ -273,6 +307,7 @@ def main():
             train_freq=1,
             gradient_steps=1,
             learning_starts=1_000,
+            ent_coef="auto_0.1",  # entropy 초기값 0.1 (collapse 늦춤)
         )
 
     # callbacks 구성
