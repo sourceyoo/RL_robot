@@ -4,11 +4,14 @@ qpos layout (5): [root_x, root_y, root_yaw, tail_joint, fin_joint]
 qvel layout (5): [vx, vy, vyaw, vtail, vfin]
 부호 규약: world -x = 머리 방향(전진).
 
-관측 (11차원):
+관측 (11 + action_history_n 차원):
   0 tail_qpos       1 tail_qvel       2 fin_qpos        3 fin_qvel
   4 world vx        5 world vy        6 yaw_rate
   7 sin(yaw)        8 cos(yaw)
   9 target_rel_x    10 target_rel_y   (world frame)
+  11~ 최근 N step의 ctrl (action_history_n>0일 때)
+       action history는 정책이 비대칭 wagging 패턴(time-asymmetric ctrl)을
+       발견하는 데 필요. yaw_test.py 진단으로 비대칭 패턴이 yaw 회전의 핵심임 확인.
 
 행동 (1차원): tail motor ctrl ∈ [-1, 1].
 
@@ -43,6 +46,7 @@ class FishSwimEnv(gym.Env):
         success_radius: float = 0.08,
         target_theta_range: tuple[float, float] = (-np.pi, np.pi),
         align_weight: float = 0.02,
+        action_history_n: int = 0,
         render_mode: str | None = None,
     ):
         super().__init__()
@@ -55,6 +59,8 @@ class FishSwimEnv(gym.Env):
         self.success_radius = success_radius
         self.target_theta_range = target_theta_range  # curriculum용 목표 각도 범위
         self.align_weight = align_weight                # head-target 정렬 보상 가중치
+        self.action_history_n = max(0, int(action_history_n))
+        self._action_history = np.zeros(self.action_history_n, dtype=np.float32)
         self.render_mode = render_mode
         self._renderer: mujoco.Renderer | None = None
 
@@ -75,7 +81,7 @@ class FishSwimEnv(gym.Env):
         if self.model.nu != 1:
             raise RuntimeError(f"기대 nu=1 (단일 motor), 실제 nu={self.model.nu}")
 
-        obs_dim = 11
+        obs_dim = 11 + self.action_history_n
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32
         )
@@ -100,13 +106,16 @@ class FishSwimEnv(gym.Env):
         qvel = self.data.qvel
         yaw = float(qpos[IDX_YAW])
         rel = self._target_pos() - self._torso_pos()
-        return np.array([
+        base = np.array([
             qpos[IDX_TAIL], qvel[IDX_TAIL],
             qpos[IDX_FIN],  qvel[IDX_FIN],
             qvel[IDX_X],    qvel[IDX_Y],   qvel[IDX_YAW],
             np.sin(yaw),    np.cos(yaw),
             rel[0],         rel[1],
         ], dtype=np.float32)
+        if self.action_history_n > 0:
+            return np.concatenate([base, self._action_history])
+        return base
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         super().reset(seed=seed)
@@ -125,12 +134,19 @@ class FishSwimEnv(gym.Env):
         mujoco.mj_forward(self.model, self.data)
         self._step_count = 0
         self._prev_distance = self._distance_to_target()
+        if self.action_history_n > 0:
+            self._action_history = np.zeros(self.action_history_n, dtype=np.float32)
         return self._get_obs(), {}
 
     def step(self, action: np.ndarray):
-        self.data.ctrl[:] = np.clip(action, -1.0, 1.0)
+        clipped = np.clip(action, -1.0, 1.0)
+        self.data.ctrl[:] = clipped
         for _ in range(self.frame_skip):
             mujoco.mj_step(self.model, self.data)
+        # action history shift (oldest 버리고 최신 추가)
+        if self.action_history_n > 0:
+            self._action_history[:-1] = self._action_history[1:]
+            self._action_history[-1] = float(clipped[0])
 
         distance = self._distance_to_target()
         progress = self._prev_distance - distance

@@ -94,11 +94,17 @@ world ─[slide_x][slide_y][hinge_yaw]─ base_link (PLA 강체)
 
 ## Python 학습 인프라 — `sim/`
 
-- `fish_env.py` — Gymnasium 환경. obs 11D: tail/fin qpos·qvel + world v + sin/cos yaw + target rel.
+- `fish_env.py` — Gymnasium 환경. obs **(11 + action_history_n)D**: tail/fin qpos·qvel + world v + sin/cos yaw + target rel + 최근 N step ctrl 이력.
 - `train.py` — SAC 학습 + 별도 thread viewer. `PolicySnapshotCallback`으로 race-free, `CurriculumStopCallback`으로 reach_rate 임계 자동 조기 종료.
-- `curriculum.py` — 3단계 자동 진행 스크립트.
+- `curriculum.py` — 6단계 자동 진행 스크립트 (v4~).
 - `view_policy.py` — 저장된 정책을 viewer로 rollout.
-- 진단 스크립트: `freq_sweep.py`, `freq_sweep_locked.py`, `freq_sweep_norollpitch.py`, `waveform_test.py`, `multiseg_test.py`. 추진 방향·대칭성 검증용.
+- 진단 스크립트: `freq_sweep.py` (추진 방향), `yaw_test.py` (회전 능력 — v4 핵심 진단), `freq_sweep_locked.py`, `freq_sweep_norollpitch.py`, `waveform_test.py`, `multiseg_test.py`.
+
+### Action history obs (v4~)
+
+`action_history_n` 인자 (default 0). 0보다 크면 obs 끝에 **최근 N step의 ctrl 값**이 stack되어 추가됨. v4에서 N=8 (3Hz × 17 step/cycle의 1/2 = 약 한 sweep 분량).
+
+목적: 정책이 *시간적 비대칭 ctrl 패턴* (D2 패턴 — 75% 한쪽 stroke + 25% 반대 stroke 등)을 발견 가능. `yaw_test.py` 진단으로 비대칭이 yaw 회전의 핵심임 확인 (대칭 sine 0.49°/s vs D2 패턴 4.6°/s).
 
 ### 보상 함수 (`fish_env.py`)
 
@@ -116,16 +122,20 @@ reward = (prev_dist - cur_dist) * 10  +  5 if reached  -  0.001 * a²  +  align_
 
 ### Curriculum 학습
 
-Random target full circle은 단일 모터에 어려움. **4단계 자동 진행** (v2~):
+Random target full circle은 단일 모터에 어려움. **6단계 자동 진행** (v4~):
 
 | Stage | tag | theta 범위 | success_radius | episode_seconds | align_weight | max_steps |
 |---|---|---|---|---|---|---|
 | 1 | s1_forward | π fixed | 0.08 m | 10s | 0.02 | 400k |
 | 2 | s2_anchor | π fixed | **0.04 m** | 10s | 0.02 | 400k |
-| 3a | s3a_arc15 | π ± 15° | 0.08 m | 10s | 0.02 | 300k |
-| 3b | s3b_arc90 | π ± 90° (=[π/2,3π/2]) | 0.08 m | **20s** (v3~) | **0.008** (v3~) | 500k |
+| 3a | s3a_arc15 | π ± 15° | 0.08 m | 10s | 0.02 | 200k |
+| 3b | s3b_arc30 | π ± 30° | 0.08 m | 10s | 0.02 | 250k |
+| 3c | s3c_arc60 | π ± 60° | 0.08 m | 10s | 0.02 | 350k |
+| 3d | s3d_arc90 | π ± 90° (=[π/2,3π/2]) | 0.08 m | **20s** | **0.008** | 500k |
 
 자동 진행: 최근 100 ep `reach_rate ≥ 90%` → 학습 조기 종료 → 다음 단계로 fine-tune. max_steps는 안전장치. STAGES 딕셔너리는 stage별로 `episode_seconds`, `align_weight` 오버라이드 가능 (`curriculum.py`).
+
+v3 → v4 변화: Stage 3을 4단계로 분화 (점진적 회전량 증가) + action history 8 추가. 직진 정책에서 회전 정책으로 *부드럽게* 이행하도록 유도.
 
 **Full circle (θ ∈ [-π, π])은 사용자 결정으로 제외** — 단일 모터로 180° 회전 후 추적은 비현실적.
 
@@ -146,36 +156,47 @@ python3 train.py --tag s1_forward \
 
 ---
 
-## 학습 결과 — v1, v2, v3
+## 학습 결과 — v1, v2, v3, v4
 
-GitHub Release로 버전 백업: [`models-v1`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v1), [`models-v2`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v2). v3은 진행 중/예정.
+GitHub Release: [`models-v1`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v1), [`models-v2`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v2). v3은 효과 없어 release 안 함. v4 진행 중/예정.
 
-### v1 → v2 → v3 변경점
+### 버전별 변경점
 
-| 변경 | v1 | v2 | v3 (진행 중) |
-|---|---|---|---|
-| align reward | 없음 | `align_weight=0.02` | s3b만 0.008 |
-| Stage 3 분할 | 단일 ±90° | s3a (±15°) → s3b (±90°) | (v2 유지) |
-| s3b episode 길이 | 10s | 10s | **20s** |
-| ent_coef init | "auto" (=1.0 init) | `auto_0.1` | `auto_0.1` |
-| TB metric | SB3 default | + `fish/*` (success_rate, final_distance, episode_seconds, avg_align) | (v2 유지) |
+| 변경 | v1 | v2 | v3 | v4 (진행 예정) |
+|---|---|---|---|---|
+| align reward | 없음 | `align_weight=0.02` | s3d만 0.008 | (v3 유지) |
+| Stage 3 분할 | 단일 ±90° | s3a (±15°) → s3b (±90°) | (v2 유지) | **s3a/b/c/d (15°→30°→60°→90°)** |
+| s3 마지막 ep 길이 | 10s | 10s | 20s | (v3 유지) |
+| ent_coef init | "auto" (1.0) | `auto_0.1` | `auto_0.1` | `auto_0.1` |
+| **action history obs** | 없음 | 없음 | 없음 | **8 step (obs 11D→19D)** |
+| TB metric | SB3 default | + `fish/*` | (v2 유지) | (v2 유지) |
 
-### Rollout 평가 (50 ep, deterministic)
+### Rollout 평가 (50 ep, deterministic, ±90° head arc 분포)
 
-| Run | v1 | v2 | 비고 |
-|---|---|---|---|
-| mode3-planar (random 500k baseline) | 6% / +0.95 | — | curriculum 가치 입증용 |
-| s1_forward (직진) | 100% / +9.22 | **100% / +10.38** | ep_rew +1.2 = align 누적분 정확 |
-| s2_anchor (radius 0.04) | 100% / +9.64 | **100% / +10.81** | 동일 |
-| **±15° head arc (s3a, 신규)** | — | **84% / +7.99** | sub-staging 효과 입증 |
-| **±90° head arc (s3b vs v1 s3)** | **24%** | **24%** | v2도 정복 못 함 → v3 (20s ep)로 시도 |
+| 버전 | s1 | s2 | s3a (±15°) | s3 (±90°) | 비고 |
+|---|---|---|---|---|---|
+| v1 | 100% / +9.22 | 100% / +9.64 | — | **24%** | 600k 학습 |
+| v2 | 100% / +10.38 | 100% / +10.81 | 84% | **24%** | align reward 추가 |
+| v3 | (v2 동일) | (v2 동일) | (v2 동일) | **24%** | s3b만 20s ep — 여전히 같음 |
 
-### 핵심 통찰
+### 핵심 통찰 — v3 진단의 결정적 발견 (`yaw_test.py`)
+
+| 측정 대상 | yaw rate |
+|---|---|
+| 학습된 v3 정책 (50 ep 평균 max yaw) | **0.94°/s** |
+| 대칭 sine 인가 (baseline) | 0.49°/s |
+| **D2 패턴 (75% 음 stroke + 25% 양)** | **4.60°/s** ✓ |
+| B2/B4 (DC offset sine) | 3.2°/s |
+| C2 (비대칭 진폭 sine) | 2.9°/s |
+
+→ **물리적으로 ±90° 회전이 20s 안에 충분히 가능** (D2 × 20s = 92°). 단 RL이 이런 *시간적 비대칭 패턴*을 발견 못 함. 진짜 병목 = **정책의 표현력 부족** (현재 obs는 즉각 상태만 받음, 시간적 패턴 학습 어려움).
+
+### 다른 통찰
 
 - ✅ **Stage 1·2** s1 30k + s2 30k = 60k step에 100%. align reward 누적이 ep_rew를 정확히 +1.2 (= 60 step × 0.02 × 평균 align) 올림 — 보상 일관성.
 - ✅ **±15° head arc 84%** — s2→s3a fine-tune이 효율적.
-- ❌ **±90° head arc 24% (v1 = v2)** — align reward로도 못 풂. 추정 원인: 10s ep로는 ±90° 회전(yaw rate ~5°/s 추정 × 18s) + 추진을 못 끝냄. v3에서 ep 길이 20s로 확장 시도.
-- ❗ **ent_coef collapse** v2도 동일 (0.1 init → 0.0007). `auto_0.1`은 floor 아닌 초기값. 진짜 floor가 필요하면 custom callback.
+- ❌ **±90° head arc는 v1/v2/v3 모두 24%** — ep 길이 늘려도 회전 능력 자체가 안 늘어남. **v4의 action history obs로 시간적 비대칭 학습 enable 시도**.
+- ❗ **ent_coef collapse** v2/v3 모두 동일 (0.1 init → 0.0006~0.0007). `auto_0.1`은 floor 아닌 초기값. 진짜 floor가 필요하면 custom callback.
 
 ---
 
@@ -303,23 +324,27 @@ tar -xzf runs-models-vN.tar.gz -C sim/
 
 ## 다음 후보 (미해결)
 
-### 진행 중 — v3 (Option A: ep 길이 확장)
+### 진행 예정 — v4 (action history + Stage 3 분화)
 
-s3b ±90°가 v1·v2 모두 24%에서 정체. 진단: 단일 모터 yaw rate 한계로 **10s 안에 ±90° 회전+추진 물리적 불가능**. 처방:
+v3 진단 결과 물리적 한계 X, 학습 표현력 부족이 본질. 처방:
 
-| 변경 | s3b만 | 이유 |
+| 변경 | 값 | 이유 |
 |---|---|---|
-| `episode_seconds` | 10 → **20s** | 회전+추진 시간 확보 |
-| `align_weight` | 0.02 → **0.008** | ep 두 배 → stay-still 위험 비례 증가 → 가중치 감소 |
-| `max_steps` | 500k 유지 | 데이터 부족 아닌 환경 한계가 본질 |
+| **obs에 action history 추가** | N=8 (obs 19D) | D2 같은 *시간적 비대칭 ctrl 패턴* 발견 enable. yaw_test.py가 본질 진단. |
+| **Stage 3 4단계 분화** | 15° → 30° → 60° → 90° | 직진 정책에서 회전 정책으로 부드러운 fine-tune chain |
+| 기존 align_weight, ent_coef 등 | v3 유지 | |
 
-### v3로도 안 풀리면 후속 카드
+⚠ obs 차원 변경으로 **이전 model.zip 호환 안 됨** — Stage 1부터 fresh 학습 (~50~75분 예상).
+
+### v4로도 안 풀리면 후속 카드
 
 1. **HER (Hindsight Experience Replay)** — 실패 ep도 "그때 닿은 곳을 목표였다고" 라벨링해 성공 경험으로. SB3 `HerReplayBuffer` 지원. env interface 수정 필요 (Dict obs).
-2. **fin actuator 추가** — 단일 모터 한계 자체를 풂. 모델·env 큰 변경.
-3. **Custom EntCoefFloorCallback** — `log_ent_coef` 강제 floor. SB3 native 불가능 → callback 자작.
-4. **ANN surrogate (Lighthill 콜백 또는 Zhong 2026 방식)** — fluid model 한계 우회. 실물 motion capture 필요.
+2. **Random initial yaw reset** — 시작 yaw 다양화로 회전 능력 강요.
+3. **align reward를 progress와 곱** — `progress × 10 × (0.5 + 0.5 × align)`. 정렬됐을 때만 progress 보상 가산. stay-still 위험 자동 해소.
+4. **fin actuator 추가** — 단일 모터 한계 자체를 풂. 모델·env 큰 변경. (사용자 명시 제외)
+5. **Custom EntCoefFloorCallback** — `log_ent_coef` 강제 floor. SB3 native 불가능 → callback 자작.
+6. **ANN surrogate (Lighthill 콜백 또는 Zhong 2026 방식)** — fluid model 한계 우회. 실물 motion capture 필요.
 
 ### 단일 지느러미의 천장
 
-학계 사례·진단 종합: **단일 모터로는 ~70~80%가 ±90° 천장**. 90% 도달이 목표면 fin actuator 추가가 필수. 사용자 결정으로 fin은 passive 유지 → v3까지가 가용 카드.
+`yaw_test.py` 측정으로 **단일 모터+passive fin의 yaw rate 물리 상한 ~4.6°/s** 확인. ±90° 회전은 20s 안에 가능. 학습이 이 능력을 *발견하느냐*가 천장 결정. v4가 표현력 부족 해소 시도. v4도 부족하면 HER이 다음 핵심 카드.

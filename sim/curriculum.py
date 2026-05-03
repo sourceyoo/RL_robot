@@ -39,6 +39,11 @@ from train import (
 
 PI = math.pi
 
+# v4: action history obs 추가 (시간적 비대칭 ctrl 패턴 학습 enable).
+# yaw_test.py 진단으로 D2 패턴 등 비대칭이 yaw 회전 핵심임 확인.
+# 4 history는 1/2 wag cycle (3Hz × 17step/cycle / 2 ≈ 8) 커버.
+ACTION_HISTORY_N = 8
+
 STAGES = [
     {
         "tag": "s1_forward",
@@ -59,15 +64,29 @@ STAGES = [
         "desc": "Stage 3a — 좌우 ±15° (θ ∈ π ± π/12)",
         "theta_min": PI - PI / 12, "theta_max": PI + PI / 12,
         "success_radius": 0.08,
-        "max_steps": 300_000,
+        "max_steps": 200_000,
     },
     {
-        "tag": "s3b_arc90",
-        "desc": "Stage 3b — 좌우 ±90° (θ ∈ [π/2, 3π/2], 전체 head arc)",
+        "tag": "s3b_arc30",
+        "desc": "Stage 3b — 좌우 ±30° (θ ∈ π ± π/6)",
+        "theta_min": PI - PI / 6, "theta_max": PI + PI / 6,
+        "success_radius": 0.08,
+        "max_steps": 250_000,
+    },
+    {
+        "tag": "s3c_arc60",
+        "desc": "Stage 3c — 좌우 ±60° (θ ∈ π ± π/3)",
+        "theta_min": PI - PI / 3, "theta_max": PI + PI / 3,
+        "success_radius": 0.08,
+        "max_steps": 350_000,
+    },
+    {
+        "tag": "s3d_arc90",
+        "desc": "Stage 3d — 좌우 ±90° (θ ∈ [π/2, 3π/2], 전체 head arc)",
         "theta_min": PI / 2, "theta_max": 3 * PI / 2,
         "success_radius": 0.08,
         "max_steps": 500_000,
-        # v2 → v3: 회전+추진에 충분한 시간 확보 (10s → 20s).
+        # 회전+추진에 충분한 시간 확보 (10s → 20s).
         # align_weight 비례 감소 (정지 정책 회피, 0.008 × 1000 step = 8 < reach 10.5).
         "episode_seconds": 20.0,
         "align_weight": 0.008,
@@ -97,7 +116,7 @@ def main():
     plot_dir = sim_dir / "plots"
     # 모든 단계의 tensorboard log를 model3_vN 폴더 안에 묶어 TB UI에서 v별 비교 가능.
     # 새 학습 시작할 때마다 v숫자를 올려도 되고, 같은 v 안에서 stage 진행도 가능.
-    tb_dir = sim_dir / "tb_logs" / "model3_v3"
+    tb_dir = sim_dir / "tb_logs" / "model3_v4"
     tb_dir.mkdir(parents=True, exist_ok=True)
 
     # Viewer thread 단 한 번만 — 첫 stage env로 시작, 모든 stage 통과
@@ -113,6 +132,7 @@ def main():
             first["success_radius"],
             episode_seconds=first.get("episode_seconds", 10.0),
             align_weight=first.get("align_weight", 0.02),
+            action_history_n=ACTION_HISTORY_N,
         )
         time.sleep(1.0)  # viewer가 뜰 시간
 
@@ -142,7 +162,8 @@ def main():
             ep_sec = stage.get("episode_seconds", 10.0)
             align_w = stage.get("align_weight", 0.02)
             make_env = make_env_factory(theta_range, stage["success_radius"],
-                                        episode_seconds=ep_sec, align_weight=align_w)
+                                        episode_seconds=ep_sec, align_weight=align_w,
+                                        action_history_n=ACTION_HISTORY_N)
             env = make_vec_env(make_env, n_envs=1)
 
             if prev_model_path is not None:
