@@ -72,6 +72,41 @@ python3 -m mujoco.viewer --mjcf=rl_fish.xml    # 모델만 검수
 tensorboard --logdir runs/                     # 학습 곡선
 ```
 
+### Curriculum 학습 (`curriculum.py`)
+
+Random target full circle은 단일 모터에 어려움. 사용자 결정으로 **3단계 curriculum** 자동 진행:
+
+| Stage | theta 범위 | success_radius | 학습 내용 | max_steps |
+|---|---|---|---|---|
+| 1 | π fixed | 0.08m | 직진 추진 | 200k |
+| 2 | π fixed | **0.04m** | 정밀 안착 | 200k |
+| 3 | [π/2, 3π/2] | 0.08m | 머리쪽 호 + yaw 정렬 | 300k |
+
+**자동 진행 메커니즘**: `train.py`의 `CurriculumStopCallback`이 최근 100 에피소드의 reach_rate를 추적, **90% 이상 도달 시 학습 조기 종료** → 다음 단계로. max_steps는 안전장치.
+
+**Stage 4 (full circle θ ∈ [-π, π])는 사용자 결정으로 제외** — 단일 모터로 180° 회전 후 추적은 비현실적, 실물 fish 로봇도 보통 사용 안 함.
+
+```bash
+python3 curriculum.py                    # 전체 단계 자동 + viewer
+python3 curriculum.py --no-viewer        # viewer 없이 빠르게
+python3 curriculum.py --threshold 0.85   # 85%로 임계 완화
+python3 curriculum.py --start-stage 2    # Stage 2부터 (이전 model.zip 있어야)
+
+# 단일 단계 수동 실행 (curriculum.py가 내부적으로 호출하는 형태)
+python3 train.py --tag s1_forward \
+    --theta-min 3.14159 --theta-max 3.14159 \
+    --success-radius 0.08 --success-threshold 0.9 \
+    --steps 200000
+```
+
+`train.py` curriculum CLI 인자:
+- `--theta-min`, `--theta-max`: 목표 각도 범위
+- `--success-radius`: 도달 판정 거리
+- `--success-threshold`: 조기 종료 reach_rate (0이면 비활성)
+- `--init-from <model.zip>`: 이전 단계 정책 fine-tuning 시작
+- `--eval-window` (기본 100): reach_rate 측정용 rolling window
+- `--check-every` (기본 5000): 체크 주기 step
+
 ## 작업 진행 규칙 — 한 단계씩 분리
 
 다단계 작업은 **한 단계씩 분리해서** 진행. 한 단계 결과를 보고하고 사용자 확인을 받은 뒤 다음으로 넘어간다.

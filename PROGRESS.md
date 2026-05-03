@@ -511,8 +511,101 @@ RL_robot/
 - y_disp 누적: 동일 메커니즘
 - 0.5 Hz는 후진 — 저주파에선 wave-thrust 약하므로 학습이 1~6Hz 영역 선호하도록 자연 학습
 
-### 13.7 다음 단계
+### 13.7 환경 갱신 + 본 학습
 
-- `fish_env.py`를 5-DOF qpos layout으로 갱신
-- SAC smoke test (학습 파이프라인 작동 확인)
-- 본 학습 50만 step
+- `fish_env.py`를 5-DOF qpos layout으로 갱신 (obs 11D: tail/fin qpos·qvel + world v + sin/cos yaw + target rel)
+- SAC smoke test 통과 (20k step, ep_rew_mean -23 → -16)
+- 본 학습 500k step (random target, tag `mode3-planar`):
+  - ep_rew_mean: -20 → +1.78
+  - 일부 방향 도달 가능 (ep351 reward 3.56), 일부 방향 실패 (ep350 reward -0.73)
+  - 도달 보너스(+5)엔 못 미침 → 모든 방향 일관 정복 안 됨
+  - **단일 모터로 random target 전체는 어려움** (180° 회전 필요한 방향이 학습 어려움)
+
+---
+
+## 14. Curriculum 학습 계획 (2026-05-02)
+
+> Random target full circle은 단일 모터에 너무 어려움. **단계적 학습**으로 분리.
+
+### 사용자 의도 (원어)
+
+> "나는 학습을 단계적으로 진행하고 싶어. 먼저 직진 학습을 하고, 직진 목표 지점 위에 안착하는 게 다음 단계, 그리고 목표 지점을 물고기 머리쪽에만 세워 좌우 목표 지점 도달, 이렇게 단계적 학습을 했으면 해."
+
+> "180도 회전 후 추적은 제외."
+
+> "각 학습률이 90% 이상 도달할 때마다 다음 단계로 넘어가도록."
+
+이 의도가 **fixed step 수가 아닌 reach_rate ≥ 90% 자동 진행** 방식의 근거. Stage 4 (full circle)는 사용자 명시적 제외 결정.
+
+### 14.1 단계 설계 — 자동 진행 (도달률 90% 임계)
+
+각 단계는 **고정 step 수가 아니라 reach_rate ≥ 90%에 도달하면 자동 종료**, 다음 단계로. max_steps는 안전장치(도달 실패 시 강제 진행).
+
+| 단계 | 목표 위치 (theta 범위) | success_radius | 시작점 | 학습 내용 | max_steps |
+|---|---|---|---|---|---|
+| **1** | π fixed (정확히 머리 앞) | 0.08m | fresh | 전진 추진 | 200k |
+| **2** | π fixed (동일) | **0.04m** (축소) | Stage 1 정책 | 정밀 안착 | 200k |
+| **3** | [π/2, 3π/2] (전방 180°) | 0.08m | Stage 2 정책 | yaw 정렬 + 추적 | 300k |
+
+### 14.2 제외된 단계 — 사용자 결정
+
+**Stage 4 (full circle θ ∈ [-π, π])는 보류**. 180° 회전 후 추적은 단일 모터에 본질적으로 어려우며, sim2real에서도 실용성 낮음 (실물 fish 로봇은 보통 후진/완전 반전 안 함).
+
+대신 baseline `mode3-planar` 모델(random 500k)이 비교 기준으로 보존됨.
+
+### 14.3 구현
+
+**`fish_env.py`** — `target_theta_range`, `success_radius` 인자 추가:
+```python
+def __init__(self, ..., target_theta_range=(-np.pi, np.pi), success_radius=0.08):
+    self.target_theta_range = target_theta_range
+    self.success_radius = success_radius
+
+def reset(self, ...):
+    theta = rng.uniform(*self.target_theta_range)
+    ...
+```
+
+**`train.py`** — curriculum CLI 추가:
+- `--theta-min`, `--theta-max`: 목표 각도 범위 (라디안)
+- `--success-radius`: 도달 판정 거리
+- `--init-from <model.zip>`: 이전 단계 정책에서 fine-tuning 시작
+- `--success-threshold`: 이 비율 이상 도달 시 학습 조기 종료 (curriculum)
+- `--eval-window`: reach_rate 측정용 최근 에피소드 수 (기본 100)
+- `--check-every`: 체크 주기 step (기본 5000)
+
+내부에 `CurriculumStopCallback` (rolling window로 reach_rate 추적, threshold 도달 시 `_on_step`이 False 반환).
+
+**`curriculum.py`** — 모든 단계 자동 순차 실행. 각 단계가 90% 도달하면 다음으로.
+
+### 14.4 실행 명령
+
+```bash
+# 자동 (모든 단계 순차)
+python3 curriculum.py                    # viewer + 자동 진행
+python3 curriculum.py --no-viewer        # viewer 없이 빠르게
+python3 curriculum.py --threshold 0.85   # 85%로 임계 완화
+python3 curriculum.py --start-stage 2    # Stage 2부터 (이전 모델 있어야)
+
+# 수동 (개별 단계)
+python3 train.py --tag s1_forward --theta-min 3.14159 --theta-max 3.14159 \
+    --success-radius 0.08 --success-threshold 0.9 --steps 200000
+
+python3 train.py --tag s2_anchor --theta-min 3.14159 --theta-max 3.14159 \
+    --success-radius 0.04 --success-threshold 0.9 --steps 200000 \
+    --init-from runs/s1_forward/model.zip
+```
+
+### 14.5 자동 진행 메커니즘
+
+`CurriculumStopCallback`이 매 step의 done 에피소드의 `info["reached"]`를 rolling deque(window=100)에 기록. `check_every` step마다 평균 reach_rate 계산:
+- `reach_rate ≥ threshold (0.9)` → callback이 False 반환 → SB3 `model.learn` 종료
+- 도달 못해도 `--steps` (max_steps)에 걸리면 강제 종료
+- 학습 종료 시 model.zip 저장 → `curriculum.py`가 다음 단계의 `--init-from`으로 전달
+
+### 14.6 다음 단계
+
+이후 작업 (필요 시):
+- yaw 보상 추가 (목표 방향과 heading 정렬에 reward)
+- fin actuator 추가 (단일 모터 한계 극복)
+- ANN surrogate (Lighthill 콜백 또는 Zhong 논문 방식)
