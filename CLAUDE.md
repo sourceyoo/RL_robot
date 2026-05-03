@@ -103,26 +103,31 @@ world ─[slide_x][slide_y][hinge_yaw]─ base_link (PLA 강체)
 ### 보상 함수 (`fish_env.py`)
 
 ```
-reward = (prev_dist - cur_dist) * 10  +  5 if reached  -  0.001 * a²
+reward = (prev_dist - cur_dist) * 10  +  5 if reached  -  0.001 * a²  +  align_w * cos(head, target)
 ```
 
-- progress 방식 (delta dist) — distance(absolute)로 주면 학습 느림
-- 도달 보너스 5, ctrl 비용 미미
-- 에피소드 = 500 step (10s, dt=0.02), reset 시 목표가 반지름 0.5m 원 위 랜덤
+- **progress** (delta dist × 10) — distance(absolute)로 주면 학습 느림
+- **도달 보너스** 5, ctrl 비용 미미
+- **align term** (v2~): `head_dir·target_dir`. yaw=0이면 head=(-1,0). 정조준 +1, 반대 -1.
+- 가중치 균형: stay-still 누적(N×align_w)이 reach 누적(~10+k·align_w)보다 작아야 함.
+  - 10s ep (N=500): `align_w ≤ 0.02`
+  - 20s ep (N=1000): `align_w ≤ 0.01`
+- 에피소드 = `episode_seconds / 0.02` step (default 10s = 500 step). 목표는 반지름 0.5m 원 위 랜덤.
 
 ### Curriculum 학습
 
-Random target full circle은 단일 모터에 어려움. **3단계 자동 진행** (사용자 결정):
+Random target full circle은 단일 모터에 어려움. **4단계 자동 진행** (v2~):
 
-| Stage | theta 범위 | success_radius | 학습 내용 | max_steps |
-|---|---|---|---|---|
-| 1 | π fixed | 0.08m | 직진 추진 | 200k |
-| 2 | π fixed | **0.04m** | 정밀 안착 | 200k |
-| 3 | [π/2, 3π/2] | 0.08m | 머리쪽 호 + yaw 정렬 | 300k |
+| Stage | tag | theta 범위 | success_radius | episode_seconds | align_weight | max_steps |
+|---|---|---|---|---|---|---|
+| 1 | s1_forward | π fixed | 0.08 m | 10s | 0.02 | 400k |
+| 2 | s2_anchor | π fixed | **0.04 m** | 10s | 0.02 | 400k |
+| 3a | s3a_arc15 | π ± 15° | 0.08 m | 10s | 0.02 | 300k |
+| 3b | s3b_arc90 | π ± 90° (=[π/2,3π/2]) | 0.08 m | **20s** (v3~) | **0.008** (v3~) | 500k |
 
-자동 진행: 최근 100 ep `reach_rate ≥ 90%` → 학습 조기 종료 → 다음 단계로 fine-tune. max_steps는 안전장치.
+자동 진행: 최근 100 ep `reach_rate ≥ 90%` → 학습 조기 종료 → 다음 단계로 fine-tune. max_steps는 안전장치. STAGES 딕셔너리는 stage별로 `episode_seconds`, `align_weight` 오버라이드 가능 (`curriculum.py`).
 
-**Stage 4 (full circle θ ∈ [-π, π])는 사용자 결정으로 제외** — 단일 모터로 180° 회전 후 추적은 비현실적.
+**Full circle (θ ∈ [-π, π])은 사용자 결정으로 제외** — 단일 모터로 180° 회전 후 추적은 비현실적.
 
 ```bash
 python3 curriculum.py                    # 전체 단계 자동 + viewer
@@ -141,45 +146,70 @@ python3 train.py --tag s1_forward \
 
 ---
 
-## 학습 결과 — models-v1 (2026-05-03)
+## 학습 결과 — v1, v2, v3
 
-GitHub Release [`models-v1`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v1)에 백업 (`runs-models-v1.tar.gz`, 9.6 MB).
+GitHub Release로 버전 백업: [`models-v1`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v1), [`models-v2`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v2). v3은 진행 중/예정.
 
-### Rollout 평가 (50 ep, deterministic, 각자의 학습 분포에서)
+### v1 → v2 → v3 변경점
 
-| Run | 도달률 | 평균 최종거리 | 평균 ep 길이 | 평균 보상 | 도달 시 step |
-|---|---|---|---|---|---|
-| mode3-planar (random 500k) | **6%** | 0.422 m | 478 | +0.95 | 138 |
-| s1_forward (직진 fixed) | **100%** | 0.074 m | 58 | +9.22 | 58 |
-| s2_anchor (radius 0.04) | **100%** | 0.031 m | 63 | +9.64 | 63 |
-| s3_head_arc (head arc, 600k) | **24%** | 0.272 m | 404 | +3.34 | 98 |
+| 변경 | v1 | v2 | v3 (진행 중) |
+|---|---|---|---|
+| align reward | 없음 | `align_weight=0.02` | s3b만 0.008 |
+| Stage 3 분할 | 단일 ±90° | s3a (±15°) → s3b (±90°) | (v2 유지) |
+| s3b episode 길이 | 10s | 10s | **20s** |
+| ent_coef init | "auto" (=1.0 init) | `auto_0.1` | `auto_0.1` |
+| TB metric | SB3 default | + `fish/*` (success_rate, final_distance, episode_seconds, avg_align) | (v2 유지) |
 
-### 평가 요약
+### Rollout 평가 (50 ep, deterministic)
 
-- ✅ **Stage 1·2 완전 정복**. s1 30k + s2 30k = 60k step에 100% — fine-tune chaining 효율적.
-- ✅ s2 평균거리 0.031 < radius 0.04 → 단순 도달이 아닌 *안전 마진 안착*.
-- ⚠️ **Stage 3 24%**. 600k step에도 평탄 (PROGRESS 명세 max 300k 초과). head arc는 yaw 양갈래로 multi-modal — 단일 모터 + 거리만 보는 보상의 한계.
-- 🔻 **Random baseline 6%** — curriculum의 가치 입증.
-- ❗ baseline에서 **α (ent_coef) 0.74→0.0008로 5만 step 내 collapse** — 탐색 부족 패턴.
+| Run | v1 | v2 | 비고 |
+|---|---|---|---|
+| mode3-planar (random 500k baseline) | 6% / +0.95 | — | curriculum 가치 입증용 |
+| s1_forward (직진) | 100% / +9.22 | **100% / +10.38** | ep_rew +1.2 = align 누적분 정확 |
+| s2_anchor (radius 0.04) | 100% / +9.64 | **100% / +10.81** | 동일 |
+| **±15° head arc (s3a, 신규)** | — | **84% / +7.99** | sub-staging 효과 입증 |
+| **±90° head arc (s3b vs v1 s3)** | **24%** | **24%** | v2도 정복 못 함 → v3 (20s ep)로 시도 |
+
+### 핵심 통찰
+
+- ✅ **Stage 1·2** s1 30k + s2 30k = 60k step에 100%. align reward 누적이 ep_rew를 정확히 +1.2 (= 60 step × 0.02 × 평균 align) 올림 — 보상 일관성.
+- ✅ **±15° head arc 84%** — s2→s3a fine-tune이 효율적.
+- ❌ **±90° head arc 24% (v1 = v2)** — align reward로도 못 풂. 추정 원인: 10s ep로는 ±90° 회전(yaw rate ~5°/s 추정 × 18s) + 추진을 못 끝냄. v3에서 ep 길이 20s로 확장 시도.
+- ❗ **ent_coef collapse** v2도 동일 (0.1 init → 0.0007). `auto_0.1`은 floor 아닌 초기값. 진짜 floor가 필요하면 custom callback.
 
 ---
 
 ## TensorBoard 메트릭 가이드
 
-표준 SB3 SAC 5 metrics + 우리 환경 해석.
+`tb_logs/` 구조는 **버전 폴더로 분리** (`model3_v1/`, `model3_v2/`, ...). TB UI에서 폴더 prefix가 run 이름에 들어와 v별 비교 용이.
+
+### SB3 기본 (이름 못 바꿈, 라이브러리 internal)
 
 | 태그 | 정의 | 우리 환경 좋은 값 |
 |---|---|---|
-| `rollout/ep_rew_mean` | 최근 100 ep 평균 보상 | Stage 1·2: +5~+10, Stage 3: +5~ |
-| `rollout/ep_len_mean` | 최근 100 ep 평균 step | 도달 시 <500, 못 하면 500 |
-| `train/actor_loss` | $J_\pi(\phi) = \alpha\log\pi - Q$ | 음수 보통, 절댓값 추세가 중요 |
-| `train/critic_loss` | Q-function MSE (Bellman 잔차) | 0.001~10, 발산 X |
+| `rollout/ep_rew_mean` | 최근 100 ep 평균 보상 | Stage 1·2: +9~+11 (align 포함), Stage 3a: +7~ |
+| `rollout/ep_len_mean` | 최근 100 ep 평균 step | 도달 시 <max, 못 하면 max |
+| `train/actor_loss` | $J_\pi(\phi) = \alpha\log\pi - Q$ | 음수 보통, 절댓값 추세 중요 |
+| `train/critic_loss` | Q-function MSE | 0.001~10, 발산 X |
 | `train/ent_coef` (α) | auto-tuned entropy 가중치 | 0.005~0.05 적당. <0.001 일찍 가면 collapse |
 
-진단 신호:
-- **α가 5만 step 내 0.001 이하** → 탐색 부족, ep_rew 정체일 가능성. `ent_coef="auto_0.1"` floor로 완화.
-- **ep_len_mean = 500 유지** → 도달 못 하는 정책 (보상 신호 없음).
+### v2 신설 — `fish/*` namespace (직관적 이름)
+
+| 태그 | 정의 |
+|---|---|
+| `fish/success_rate` | 최근 N ep 도달률 (0~1) |
+| `fish/final_distance` | 최근 N ep 평균 종료 거리 (m) |
+| `fish/episode_seconds` | 최근 N ep 평균 ep 길이 (초, ep_len × dt) |
+| `fish/avg_align` | 최근 N ep 평균 정렬도 (-1 반대 ~ +1 정조준) |
+
+(v1에는 없음 — `CurriculumStopCallback`이 추가하기 시작했음. v1 학습 곡선 비교 시 SB3 default만 사용)
+
+### 진단 신호
+
+- **α가 5만 step 내 0.001 이하** → 탐색 부족, ep_rew 정체. `auto_0.1`로 늦춰지긴 하나 floor는 아님.
+- **ep_len_mean = max 유지** → 도달 못 하는 정책 (보상 신호 없음).
 - **critic_loss 발산** → reward scaling/LR 문제.
+- **fish/avg_align 높지만 success_rate 낮음** → "정렬만 추구 + 진행 안 함" 정책 (align_weight 너무 큼).
 
 TB 띄우기 (SSH 원격 → Mac 브라우저는 VS Code Remote SSH가 자동 포워딩):
 
@@ -202,7 +232,7 @@ tensorboard --logdir tb_logs/ --bind_all
 
 **왜 SAC인가** (PPO 아님): 1D 연속 ctrl, 시뮬 비싸지 않음, multi-modal optimum 가능성. 학계 fish RL 표준.
 
-하이퍼파라미터 (`train.py:262`): LR=3e-4, batch=256, γ=0.99, τ=0.005, buffer=200k, **`ent_coef="auto"` (floor 없음)**. floor 두려면 `auto_0.1`.
+하이퍼파라미터 (`train.py:262`, `curriculum.py`): LR=3e-4, batch=256, γ=0.99, τ=0.005, buffer=200k, **`ent_coef="auto_0.1"` (v2~)** — *초기값* 0.1, floor 아님. 진짜 floor는 custom callback 필요 (구현 안 됨).
 
 ---
 
@@ -273,7 +303,23 @@ tar -xzf runs-models-vN.tar.gz -C sim/
 
 ## 다음 후보 (미해결)
 
-1. **Stage 3 yaw 보상 추가** — 거리만이 아니라 목표 방향 헤딩 정렬에도 보상. 24% 끌어올리기.
-2. **`ent_coef="auto_0.1"` floor 시도** — entropy collapse 완화. 적은 변경, 효과 한정적일 수 있음.
-3. **fin actuator 추가** — 단일 모터 한계 자체를 풂. 모델·env 변경 큼.
+### 진행 중 — v3 (Option A: ep 길이 확장)
+
+s3b ±90°가 v1·v2 모두 24%에서 정체. 진단: 단일 모터 yaw rate 한계로 **10s 안에 ±90° 회전+추진 물리적 불가능**. 처방:
+
+| 변경 | s3b만 | 이유 |
+|---|---|---|
+| `episode_seconds` | 10 → **20s** | 회전+추진 시간 확보 |
+| `align_weight` | 0.02 → **0.008** | ep 두 배 → stay-still 위험 비례 증가 → 가중치 감소 |
+| `max_steps` | 500k 유지 | 데이터 부족 아닌 환경 한계가 본질 |
+
+### v3로도 안 풀리면 후속 카드
+
+1. **HER (Hindsight Experience Replay)** — 실패 ep도 "그때 닿은 곳을 목표였다고" 라벨링해 성공 경험으로. SB3 `HerReplayBuffer` 지원. env interface 수정 필요 (Dict obs).
+2. **fin actuator 추가** — 단일 모터 한계 자체를 풂. 모델·env 큰 변경.
+3. **Custom EntCoefFloorCallback** — `log_ent_coef` 강제 floor. SB3 native 불가능 → callback 자작.
 4. **ANN surrogate (Lighthill 콜백 또는 Zhong 2026 방식)** — fluid model 한계 우회. 실물 motion capture 필요.
+
+### 단일 지느러미의 천장
+
+학계 사례·진단 종합: **단일 모터로는 ~70~80%가 ±90° 천장**. 90% 도달이 목표면 fin actuator 추가가 필수. 사용자 결정으로 fin은 passive 유지 → v3까지가 가용 카드.

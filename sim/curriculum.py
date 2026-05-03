@@ -67,6 +67,10 @@ STAGES = [
         "theta_min": PI / 2, "theta_max": 3 * PI / 2,
         "success_radius": 0.08,
         "max_steps": 500_000,
+        # v2 → v3: 회전+추진에 충분한 시간 확보 (10s → 20s).
+        # align_weight 비례 감소 (정지 정책 회피, 0.008 × 1000 step = 8 < reach 10.5).
+        "episode_seconds": 20.0,
+        "align_weight": 0.008,
     },
 ]
 
@@ -93,7 +97,7 @@ def main():
     plot_dir = sim_dir / "plots"
     # 모든 단계의 tensorboard log를 model3_vN 폴더 안에 묶어 TB UI에서 v별 비교 가능.
     # 새 학습 시작할 때마다 v숫자를 올려도 되고, 같은 v 안에서 stage 진행도 가능.
-    tb_dir = sim_dir / "tb_logs" / "model3_v2"
+    tb_dir = sim_dir / "tb_logs" / "model3_v3"
     tb_dir.mkdir(parents=True, exist_ok=True)
 
     # Viewer thread 단 한 번만 — 첫 stage env로 시작, 모든 stage 통과
@@ -107,6 +111,8 @@ def main():
             model_holder, stop_event,
             (first["theta_min"], first["theta_max"]),
             first["success_radius"],
+            episode_seconds=first.get("episode_seconds", 10.0),
+            align_weight=first.get("align_weight", 0.02),
         )
         time.sleep(1.0)  # viewer가 뜰 시간
 
@@ -133,7 +139,10 @@ def main():
             run_dir.mkdir(parents=True, exist_ok=True)
 
             theta_range = (stage["theta_min"], stage["theta_max"])
-            make_env = make_env_factory(theta_range, stage["success_radius"])
+            ep_sec = stage.get("episode_seconds", 10.0)
+            align_w = stage.get("align_weight", 0.02)
+            make_env = make_env_factory(theta_range, stage["success_radius"],
+                                        episode_seconds=ep_sec, align_weight=align_w)
             env = make_vec_env(make_env, n_envs=1)
 
             if prev_model_path is not None:
