@@ -119,7 +119,7 @@ def main():
     plot_dir = sim_dir / "plots"
     # 모든 단계의 tensorboard log를 model3_vN 폴더 안에 묶어 TB UI에서 v별 비교 가능.
     # 새 학습 시작할 때마다 v숫자를 올려도 되고, 같은 v 안에서 stage 진행도 가능.
-    tb_dir = sim_dir / "tb_logs" / "model3_v8"
+    tb_dir = sim_dir / "tb_logs" / "model3_v9"
     tb_dir.mkdir(parents=True, exist_ok=True)
 
     # Viewer thread 단 한 번만 — 첫 stage env로 시작, 모든 stage 통과
@@ -188,8 +188,9 @@ def main():
                 threshold=args.threshold, window=100,
                 check_every=5000, min_steps=args.min_steps,
             ))
-            # v7 floor 0.02는 결정적 학습 방해 의심. v8 0.005 (CLAUDE.md "0.005~0.05 적당" 하한).
-            callbacks.append(EntCoefFloorCallback(floor=0.005))
+            # v8 floor 0.005는 mode 정상화 효과 ✓ but s3a 74%(v5/v7 90%대)로 정확도 stage 떨어짐.
+            # v9: 0.002로 낮춤 — 작은 회전엔 결정적 학습 허용, 큰 회전엔 floor 효과 잔존 가설.
+            callbacks.append(EntCoefFloorCallback(floor=0.002))
             cb = CallbackList(callbacks) if callbacks else None
 
             model.learn(

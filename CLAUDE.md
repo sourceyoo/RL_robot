@@ -163,43 +163,49 @@ python3 train.py --tag s1_forward \
 
 ---
 
-## 학습 결과 — v1 ~ v5
+## 학습 결과 — v1 ~ v8
 
-GitHub Release: [`models-v1`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v1), [`models-v2`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v2). v3은 효과 없어 release 안 함. v4 평가 미실시. v5 release 예정 (`models-v5`).
+GitHub Release: [`models-v1`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v1), [`models-v2`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v2), [`models-v5`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v5) (실패 기록). v3·v4·v6·v7·v8 release 안 함.
 
 ### 버전별 변경점
 
-| 변경 | v1 | v2 | v3 | v4 | v5 |
+| 변경 | v1 | v2 | v3 | v4 | v5 | v6 | v7 | v8 |
+|---|---|---|---|---|---|---|---|---|
+| align reward | 없음 | `+0.02·align` | s3d만 0.008 | (v3) | **`prog>0`만 곱** `(0.5+0.5·align)` | (v5) | **대칭 곱** (prog 부호 무관) | **v4 가산식 복귀** `+0.02·align` |
+| Stage 3 분할 | 단일 ±90° | s3a→s3b | (v2) | **s3a/b/c/d (15→30→60→90°)** | (v4) | (v4) | (v4) | (v4) |
+| s3 ep 길이 | 10s | 10s | s3d 20s | (v3) | (v3) | **s3a~d 30s 통일** | (v6) | (v6) |
+| ent_coef init | "auto" (1.0) | `auto_0.1` | `auto_0.1` | `auto_0.1` | `auto_0.1` | (v5) | (v5) | (v5) |
+| **action history obs** | 없음 | 없음 | 없음 | **8 step (19D)** | (v4) | (v4) | (v4) | (v4) |
+| **EntCoefFloorCallback** | 없음 | 없음 | 없음 | 없음 | 없음 | 없음 | **floor 0.02** | **floor 0.005** |
+
+### s3d (±90°) 결과 — 마지막 100 ep 윈도우
+
+| 버전 | reach | avg_align | final_dist | mode | 한 줄 평가 |
 |---|---|---|---|---|---|
-| align reward | 없음 | `+ 0.02·align` 가산 | s3d만 0.008 | (v3 유지) | **`progress × (0.5+0.5·align)` 곱셈, prog>0일 때만** |
-| Stage 3 분할 | 단일 ±90° | s3a (±15°) → s3b (±90°) | (v2 유지) | **s3a/b/c/d (15°→30°→60°→90°)** | (v4 유지) |
-| s3 마지막 ep 길이 | 10s | 10s | 20s | (v3 유지) | (v3 유지) |
-| ent_coef init | "auto" (1.0) | `auto_0.1` | `auto_0.1` | `auto_0.1` | `auto_0.1` |
-| **action history obs** | 없음 | 없음 | 없음 | **8 step (obs 11D→19D)** | (v4 유지) |
-| TB metric | SB3 default | + `fish/*` | (v2 유지) | (v2 유지) | (v2 유지) |
+| v1 | 24% | (미기록) | — | (미기록) | baseline (50 ep det) |
+| v2 | 24% | (미기록) | — | (미기록) | align 추가, 변화 X |
+| v3 | 24% | (미기록) | — | (미기록) | ep 20s, 변화 X |
+| v5 | 20% | −0.50 | 0.32 m | 머리 반대 + 후진 | 곱셈 비대칭 부작용 |
+| v6 | 20% | −0.10 | 0.31 m | 모호 | 시간만 늘림, 학습 미수렴 |
+| v7 | 16% | −0.73 | **6.27 m** | **도망** ⚠ | 대칭 곱 + ent floor 0.02, 재앙 |
+| **v8** | **17%** | **+0.58** | **0.57 m** | **목표 향함** ✓ | **mode 정상화 첫 성공, 천장 미달성** |
 
-### Rollout 평가 (50 ep, deterministic, ±90° head arc 분포)
+### Stage 진행 비교
 
-| 버전 | s1 | s2 | s3a (±15°) | s3 (±90°) | 비고 |
-|---|---|---|---|---|---|
-| v1 | 100% / +9.22 | 100% / +9.64 | — | **24%** | 600k 학습 |
-| v2 | 100% / +10.38 | 100% / +10.81 | 84% | **24%** | align reward 추가 |
-| v3 | (v2 동일) | (v2 동일) | (v2 동일) | **24%** | s3b만 20s ep — 여전히 같음 |
-| v4 | — | — | — | — | 50 ep 평가 미실시 |
-| v5 | 100%¹ | 100%¹ | 91%¹ | **20%¹** | 50 ep 평가 미실시. ¹학습 마지막 100 ep 윈도우. s3b 78%, s3c 36% (max_steps 도달, 90% 못 넘음) |
+| Stage | v5 | v6 | v7 | **v8** |
+|---|---|---|---|---|
+| s3a_arc15 (±15°) | 91% (150k 조기) | 90% (185k 조기) | 92% (115k 조기) | 74% (200k max) |
+| s3b_arc30 (±30°) | 78% (max) | 71% (max) | 59% (max) | 70% (max) |
+| s3c_arc60 (±60°) | 36% (max) | 35% (max) | 31% (max) | **46% (max)** ⭐ |
+| s3d_arc90 (±90°) | 20% | 20% | 16% | 17% |
 
-### v5 학습 진행 (curriculum 마지막 100 ep 윈도우)
+### v8 핵심 진단 — 병목 재정의
 
-| Stage | 종료 step | reach_rate | 결과 |
-|---|---|---|---|
-| s1_forward | 30k | 100% | 조기 종료 ✓ |
-| s2_anchor | 30k | 100% | 조기 종료 ✓ |
-| s3a_arc15 (±15°) | 150k | 91% | 조기 종료 ✓ |
-| s3b_arc30 (±30°) | 250k | 78% | max 도달, 90% 못 넘음 |
-| s3c_arc60 (±60°) | 350k | 36% | max 도달, 정체 |
-| s3d_arc90 (±90°) | 500k | **20%** | max 도달, 후반 오히려 하락(28→20%) |
-
-v5 핵심 진단: `fish/avg_align ≈ −0.5` (s3d 종료 시점). 곱셈 보상이 의도와 정반대로 작용 — 멀어질 때 풀 페널티 유지하는 비대칭 때문에, **머리를 목표 반대 방향으로 둔 채 후진 모드로 가까워지는** 정책 mode에 빠짐. v3·v4의 24% 대비 더 낮은 20%로 악화.
+v8 이전(v5~v7): **머리 방향 자체가 잘못됨** (mode collapse) → 보상 함수 문제.
+v8 시점: **머리 방향 OK (avg_align +0.58), 그러나 fish가 회전+추진 동작 시퀀스를 못 만듦**:
+- ep 26s 동안 final_distance 0.57m → 거의 못 움직임
+- s3c 46% (이전 best 36%) → ±60°까진 진보. ±90°에서 천장.
+- → 진짜 병목은 **정책이 yaw_test.py D2 같은 시간적 비대칭 ctrl 패턴을 발견 못 함**. 보상은 옳은데 policy가 동작을 못 만듦.
 
 ### 핵심 통찰 — v3 진단의 결정적 발견 (`yaw_test.py`)
 
@@ -215,11 +221,14 @@ v5 핵심 진단: `fish/avg_align ≈ −0.5` (s3d 종료 시점). 곱셈 보상
 
 ### 다른 통찰
 
-- ✅ **Stage 1·2** s1 30k + s2 30k = 60k step에 100% (v5도 동일). align reward 누적이 ep_rew를 정확히 +1.2 (= 60 step × 0.02 × 평균 align) 올림 — 보상 일관성 (v2~v4 한정, v5는 곱셈식이라 ep_rew 절대값 다름).
-- ✅ **±15° head arc** — v2 84%, v5 91%. s2→s3a fine-tune이 효율적.
-- ❌ **±90° head arc 정체** — v1/v2/v3 24%, v5 20%. ep 길이·action history·곱셈 보상 어떤 변경도 천장 못 뚫음.
-- ❌ **v5 곱셈 보상의 역효과** — `prog>0일 때만 align factor` 비대칭 때문에, 머리를 반대로 두고 후진 진행하는 mode 학습 (avg_align −0.5). 정렬 신호로 작동하지 않고 정렬 회피 신호가 됨.
-- ❗ **ent_coef collapse** v2/v3/v5 모두 동일 (0.1 init → 0.0004~0.0007). `auto_0.1`은 floor 아닌 초기값. 진짜 floor가 필요하면 custom callback.
+- ✅ **Stage 1·2** s1 30k + s2 30k = 60k step에 100% (모든 버전 동일). align reward 누적이 ep_rew를 정확히 +1.2 (= 60 step × 0.02 × 평균 align) 올림 — 보상 일관성 (v2~v4·v8 한정, v5~v7은 곱셈식이라 ep_rew 절대값 다름).
+- ✅ **±15° head arc** — v2 84%, v5/v6/v7 90%대. s2→s3a fine-tune 효율적.
+- ✅ **v8 mode 정상화** — avg_align 처음 양수(+0.58), 도망/반대 mode 사라짐. 가산식 + EntCoefFloorCallback 조합 효과.
+- ✅ **v8 s3c 46%** — 이전 best 36% 대비 +10%p. ±60°까진 진보.
+- ❌ **±90° head arc 정체** — v1~v8 모두 16~24%. 보상·algorithm·obs 어느 변경도 천장 못 뚫음.
+- ❌ **v5/v7 곱셈 보상의 역효과** — 비대칭(v5)은 머리 반대 + 후진, 대칭(v7)은 도망 mode. 함정 #8.
+- ❗ **ent_coef collapse 해결** — v2~v6 모두 0.0004~0.0007로 죽었으나 v7 floor 0.02는 결정적 학습 방해, **v8 floor 0.005가 균형점**.
+- ❗ **v8 s3a 74%로 떨어짐** — v5/v7의 90%대보다 낮음. ent floor 0.005가 작은 회전(정확도 요구) stage엔 entropy 과잉 의심. v9에서 floor 더 낮춰 검증 예정.
 
 ---
 
@@ -348,24 +357,31 @@ tar -xzf runs-models-vN.tar.gz -C sim/
 
 ## 다음 후보 (미해결)
 
-### v5까지 시도된 카드 (요약)
+### v8까지 시도된 카드 (요약)
 
 | 카드 | 결과 |
 |---|---|
-| v2 — align 가산 reward (`+ 0.02·align`) | s3 ±90° 24% (변화 없음) |
+| v2 — align 가산 reward (`+0.02·align`) | s3 ±90° 24% (변화 없음) |
 | v3 — s3d만 ep 20s + align_weight 0.008 | 24% (변화 없음) |
 | v4 — action history obs (N=8) + Stage 3 4단계 분화 | 평가 미실시 (v5로 이행) |
-| v5 — align을 progress와 곱셈 결합 | **20%로 악화**. avg_align −0.5 (반대 정렬 mode). |
+| v5 — align을 progress와 곱셈 (비대칭, prog>0만) | **20%로 악화**. avg_align −0.5 (머리 반대+후진) |
+| v6 — v5 + ep 30s 통일 | 20% (변화 없음). 시간 부족 가설 reject. |
+| v7 — 대칭 곱 + EntCoefFloorCallback floor 0.02 | **16%로 더 악화**. avg_align −0.73, final_dist 6m (도망 mode) |
+| **v8 — v4 가산식 복귀 + ent floor 0.005** | **17%, avg_align +0.58 (mode 정상화). s3c 46%로 +10%p** |
 
 ### 다음 후속 카드
 
-1. **곱셈 보상 롤백** — v5의 곱셈식이 역효과를 냈음. v4의 가산식 복귀 + (선택) align factor의 비대칭성을 제거 (`prog<0`일 때도 align factor 적용)하거나, `align<0`일 때 **반대 정렬 강한 페널티** (예: `prog *= max(0, align)` — 정렬 안 되면 progress 보상 0).
-2. **Random initial yaw reset** — 시작 yaw 다양화로 회전 능력 강요. 가장 가벼운 변경.
-3. **HER (Hindsight Experience Replay)** — 실패 ep도 "그때 닿은 곳을 목표였다고" 라벨링해 성공 경험으로. SB3 `HerReplayBuffer` 지원. env interface 수정 필요 (Dict obs).
-4. **Custom EntCoefFloorCallback** — `log_ent_coef` 강제 floor. v2/v3/v5 모두 0.0004~0.0007로 collapse, 탐색 부족 의심. SB3 native 불가능 → callback 자작.
-5. **fin actuator 추가** — 단일 모터 한계 자체를 풂. 모델·env 큰 변경. (사용자 명시 제외)
-6. **ANN surrogate (Lighthill 콜백 또는 Zhong 2026 방식)** — fluid model 한계 우회. 실물 motion capture 필요.
+진짜 병목 재정의 (v8 시점): 머리 방향은 OK(+0.58)지만 *회전+추진 동작 시퀀스 자체를 학습 못 함*.
+
+1. **ent floor 더 낮춤 (v9)** — 0.005 → 0.001~0.002. v8 s3a 74%(이전 90%대)가 entropy 과잉 의심. 작은 회전에 결정적 학습 허용 + 큰 회전엔 floor 효과 잔존 가설.
+2. **action history N 확대** — 8 → 16 또는 24. D2 패턴(75/25 비대칭 stroke) 표현엔 더 긴 history 필요. obs dim 19 → 27/35.
+3. **align_weight ep에 비례** — 0.02 → 0.0067 (30s ep). stay-still 위험 정량적 감소. v8에서 stay-still mode 안 보이니 우선순위 낮음.
+4. **HER (Hindsight Experience Replay)** — env Dict obs 큰 변경. 가장 큰 카드. v8 위에 얹기.
+5. **CrossQ (BatchNorm + target net 제거)** — SAC 변형, sample efficiency. 보상 안정된 v8 이후 시도 가능. SB3 native 미지원.
+6. **Custom 보상 — yaw 변화 자체를 보상** — 회전 시도 자체에 인센티브. 다만 신호 noise 우려.
+7. **fin actuator 추가** — 단일 모터 한계 자체를 풂. (사용자 명시 제외)
+8. **ANN surrogate (Lighthill / Zhong 2026)** — fluid model 한계 우회. 실물 motion capture 필요.
 
 ### 단일 지느러미의 천장
 
-`yaw_test.py` 측정으로 **단일 모터+passive fin의 yaw rate 물리 상한 ~4.6°/s** 확인. ±90° 회전은 20s 안에 가능. 학습이 이 능력을 *발견하느냐*가 천장 결정. v4·v5의 "표현력 + 보상 형태" 변경으로는 못 뚫음. 다음 우선순위는 **(1) 보상 롤백/단순화** → **(2) HER 또는 random yaw reset** 조합.
+`yaw_test.py` 측정으로 **단일 모터+passive fin의 yaw rate 물리 상한 ~4.6°/s** 확인. ±90° 회전은 20s 안에 가능. v1~v8 모두 16~24%로 천장 못 뚫음. v8에서 처음으로 "올바른 mode" 회복 → 다음 카드는 *동작 시퀀스 발견* 강화 (ent floor 조정, action history 확장, HER) 방향.
