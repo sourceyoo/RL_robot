@@ -132,6 +132,31 @@ class CurriculumStopCallback(BaseCallback):
         return True
 
 
+class EntCoefFloorCallback(BaseCallback):
+    """SAC `log_ent_coef`가 floor 아래로 떨어지지 않게 강제.
+
+    SB3 SAC는 auto α-tuning을 위해 `log_ent_coef`를 학습 가능 nn.Parameter로 둠.
+    수렴이 빠르면 0.001 미만으로 collapse → 탐색 사망 → 새 mode 발견 불가.
+    이 callback은 매 step `log_ent_coef.data`를 floor 의 log로 clamp (forward만,
+    optimizer는 그대로 움직이지만 다음 step 전에 다시 clamp).
+    """
+
+    def __init__(self, floor: float = 0.02, verbose: int = 0):
+        super().__init__(verbose)
+        self.floor = floor
+        import math as _m
+        self._log_floor = float(_m.log(floor))
+
+    def _on_step(self) -> bool:
+        log_a = getattr(self.model, "log_ent_coef", None)
+        if log_a is not None:
+            import torch
+            with torch.no_grad():
+                if log_a.item() < self._log_floor:
+                    log_a.data.fill_(self._log_floor)
+        return True
+
+
 def save_training_plots(tb_log_root: Path, tag: str, plot_dir: Path) -> None:
     """tensorboard event를 읽어 학습 곡선 PNG 저장.
 

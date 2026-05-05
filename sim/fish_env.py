@@ -15,11 +15,9 @@ qvel layout (5): [vx, vy, vyaw, vtail, vfin]
 
 행동 (1차원): tail motor ctrl ∈ [-1, 1].
 
-보상: progress(거리 감소) × 10 × align_factor + reached_bonus - ctrl_cost.
-  - align_factor = 0.5 + 0.5·cos(머리, 목표)  → 0(반대) ~ 1(정조준)
-  - 멀어질 때(progress<0)는 align 미적용 → 풀 페널티 유지 (대칭 비대칭).
-  - 정렬 안 된 상태로의 진행은 보상 약화 → 회전 우선 정책 유도.
-  - stay-still 자동 해소 (정렬만으론 보상 0).
+보상 (v8): progress·10 + reached_bonus - ctrl_cost + 0.02·align (v4 가산식 복귀).
+  - 곱셈 보상은 v5(비대칭) / v7(대칭) 모두 mode collapse 유도 → 가산식으로 복귀.
+  - align ∈ [-1, +1] (cos(머리, 목표)). 가중치 0.02는 stay-still(N×0.02)이 reach(~10) 못 넘게.
 """
 
 from __future__ import annotations
@@ -162,17 +160,14 @@ class FishSwimEnv(gym.Env):
         rel_norm = float(np.linalg.norm(rel))
         align = float(np.dot(head_dir, rel / rel_norm)) if rel_norm > 1e-6 else 0.0
 
-        # align × progress 곱셈: 가까워질 때만 정렬 비례 감쇄.
-        # 멀어질 때는 풀 페널티 유지 (정렬 좋다고 멀어지는 게 용서되지 않도록).
-        prog_term = float(progress * 10.0)
-        if prog_term > 0.0:
-            align_factor = 0.5 + 0.5 * align    # cos -1~1 → 0~1
-            prog_term *= align_factor
-
+        # v8: v4 가산식 복귀. v5(비대칭 곱)는 머리 반대+후진 mode, v7(대칭 곱)은 도망 mode
+        # (final_distance 6m). 곱셈 카테고리 전체가 부적합 — 가산식 + ent floor로 회귀.
+        ALIGN_W = 0.02
         reward = (
-            prog_term
+            float(progress * 10.0)
             + (5.0 if reached else 0.0)
             - ctrl_cost
+            + ALIGN_W * align
         )
 
         self._prev_distance = distance

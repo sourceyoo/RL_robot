@@ -31,6 +31,7 @@ from stable_baselines3.common.env_util import make_vec_env
 from train import (
     PolicySnapshotCallback,
     CurriculumStopCallback,
+    EntCoefFloorCallback,
     make_env_factory,
     start_viewer_thread,
     save_training_plots,
@@ -59,12 +60,15 @@ STAGES = [
         "success_radius": 0.04,
         "max_steps": 400_000,
     },
+    # v6: Stage 3 전체 ep_seconds 30s (10s/20s → 30s 통일).
+    # yaw_test.py D2 best 4.6°/s × 30s = 138° 회전 가능 → ±90° 회전+추진(0.5m, 1.8s)에 9s 여유.
     {
         "tag": "s3a_arc15",
         "desc": "Stage 3a — 좌우 ±15° (θ ∈ π ± π/12)",
         "theta_min": PI - PI / 12, "theta_max": PI + PI / 12,
         "success_radius": 0.08,
         "max_steps": 200_000,
+        "episode_seconds": 30.0,
     },
     {
         "tag": "s3b_arc30",
@@ -72,6 +76,7 @@ STAGES = [
         "theta_min": PI - PI / 6, "theta_max": PI + PI / 6,
         "success_radius": 0.08,
         "max_steps": 250_000,
+        "episode_seconds": 30.0,
     },
     {
         "tag": "s3c_arc60",
@@ -79,6 +84,7 @@ STAGES = [
         "theta_min": PI - PI / 3, "theta_max": PI + PI / 3,
         "success_radius": 0.08,
         "max_steps": 350_000,
+        "episode_seconds": 30.0,
     },
     {
         "tag": "s3d_arc90",
@@ -86,8 +92,7 @@ STAGES = [
         "theta_min": PI / 2, "theta_max": 3 * PI / 2,
         "success_radius": 0.08,
         "max_steps": 500_000,
-        # 회전+추진에 충분한 시간 확보 (10s → 20s).
-        "episode_seconds": 20.0,
+        "episode_seconds": 30.0,
     },
 ]
 
@@ -114,7 +119,7 @@ def main():
     plot_dir = sim_dir / "plots"
     # 모든 단계의 tensorboard log를 model3_vN 폴더 안에 묶어 TB UI에서 v별 비교 가능.
     # 새 학습 시작할 때마다 v숫자를 올려도 되고, 같은 v 안에서 stage 진행도 가능.
-    tb_dir = sim_dir / "tb_logs" / "model3_v5"
+    tb_dir = sim_dir / "tb_logs" / "model3_v8"
     tb_dir.mkdir(parents=True, exist_ok=True)
 
     # Viewer thread 단 한 번만 — 첫 stage env로 시작, 모든 stage 통과
@@ -183,6 +188,8 @@ def main():
                 threshold=args.threshold, window=100,
                 check_every=5000, min_steps=args.min_steps,
             ))
+            # v7 floor 0.02는 결정적 학습 방해 의심. v8 0.005 (CLAUDE.md "0.005~0.05 적당" 하한).
+            callbacks.append(EntCoefFloorCallback(floor=0.005))
             cb = CallbackList(callbacks) if callbacks else None
 
             model.learn(

@@ -302,6 +302,7 @@ tensorboard --logdir tb_logs/ --bind_all
 5. **CPG/Fourier 액션공간 (MODE_2 시절)**: 단일 관절 본질적 한계 — 14가지 waveform 모두 후진. 학습할 +x 패턴이 모델에 존재하지 않음.
 6. **F1 STEP 분해 → 다중 fluid ellipsoid**: z축으로 +0.56 m 발산. 비대칭 lift 폭주. 롤백.
 7. **단일 관절 + ellipsoid + 6DOF 조합**: 위 1~6의 종합 결론 — 부호 못 뒤집음.
+8. **곱셈 보상 (`prog × align_factor`)**: v5(비대칭, `prog>0`만)는 머리 반대 + 후진 mode (avg_align −0.5). v7(대칭, prog 부호 무관)은 도망 mode (final_distance 6m, ±90° reach 16%). 둘 다 v3 가산식(`+ 0.02·align`) 24%보다 나쁨. **가산식으로 가야 함**.
 
 → 정착한 조합 = **MODE_3 + Ecoflex passive fin + 3DOF planar**.
 
