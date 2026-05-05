@@ -192,15 +192,13 @@ def save_training_plots(tb_log_root: Path, tag: str, plot_dir: Path) -> None:
 
 
 def make_env_factory(target_theta_range, success_radius,
-                     episode_seconds=10.0, align_weight=0.02,
-                     action_history_n=0):
+                     episode_seconds=10.0, action_history_n=0):
     """env 인자(curriculum용)를 closure로 묶어 SB3가 부를 수 있는 0-arg make_env 반환."""
     def make_env():
         return Monitor(FishSwimEnv(
             target_theta_range=target_theta_range,
             success_radius=success_radius,
             episode_seconds=episode_seconds,
-            align_weight=align_weight,
             action_history_n=action_history_n,
         ))
     return make_env
@@ -208,8 +206,7 @@ def make_env_factory(target_theta_range, success_radius,
 
 def start_viewer_thread(model_holder: dict, stop_event: threading.Event,
                         target_theta_range, success_radius,
-                        episode_seconds=10.0, align_weight=0.02,
-                        action_history_n=0) -> threading.Thread:
+                        episode_seconds=10.0, action_history_n=0) -> threading.Thread:
     """별도 thread에서 viewer를 띄우고 model_holder['policy'] (deepcopy 스냅샷)로 rollout.
 
     snapshot은 학습 thread의 callback이 매 N step마다 갱신.
@@ -219,7 +216,6 @@ def start_viewer_thread(model_holder: dict, stop_event: threading.Event,
         target_theta_range=target_theta_range,
         success_radius=success_radius,
         episode_seconds=episode_seconds,
-        align_weight=align_weight,
         action_history_n=action_history_n,
     )
     state = {"obs": eval_env.reset()[0], "ep": 1, "ep_reward": 0.0, "step": 0}

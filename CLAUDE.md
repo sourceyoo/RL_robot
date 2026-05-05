@@ -108,34 +108,41 @@ world ─[slide_x][slide_y][hinge_yaw]─ base_link (PLA 강체)
 
 ### 보상 함수 (`fish_env.py`)
 
+**v5 (현재 코드)** — align을 progress에 곱셈으로 결합:
+
 ```
-reward = (prev_dist - cur_dist) * 10  +  5 if reached  -  0.001 * a²  +  align_w * cos(head, target)
+prog = (prev_dist - cur_dist) * 10
+if prog > 0:
+    prog *= 0.5 + 0.5 * cos(head, target)   # 0(반대) ~ 1(정조준)
+reward = prog  +  5 if reached  -  0.001 * a²
 ```
 
 - **progress** (delta dist × 10) — distance(absolute)로 주면 학습 느림
-- **도달 보너스** 5, ctrl 비용 미미
-- **align term** (v2~): `head_dir·target_dir`. yaw=0이면 head=(-1,0). 정조준 +1, 반대 -1.
-- 가중치 균형: stay-still 누적(N×align_w)이 reach 누적(~10+k·align_w)보다 작아야 함.
-  - 10s ep (N=500): `align_w ≤ 0.02`
-  - 20s ep (N=1000): `align_w ≤ 0.01`
+- **align factor** (v5~): 가까워질 때만 적용. 정렬 안 된 상태로의 진행은 보상 약화 → 회전 우선 정책 유도. 멀어질 때(prog<0)는 풀 페널티 유지 (대칭 비대칭).
+- **도달 보너스** 5, ctrl 비용 미미.
 - 에피소드 = `episode_seconds / 0.02` step (default 10s = 500 step). 목표는 반지름 0.5m 원 위 랜덤.
+
+**v2~v4 (구버전)** — align은 가산항: `... + align_w · cos(head, target)`. 가중치 균형 제약 (10s ep `align_w ≤ 0.02`, 20s ep `≤ 0.01`)이 있었음. v5에서 `align_weight` 인자 자체를 제거.
 
 ### Curriculum 학습
 
 Random target full circle은 단일 모터에 어려움. **6단계 자동 진행** (v4~):
 
-| Stage | tag | theta 범위 | success_radius | episode_seconds | align_weight | max_steps |
-|---|---|---|---|---|---|---|
-| 1 | s1_forward | π fixed | 0.08 m | 10s | 0.02 | 400k |
-| 2 | s2_anchor | π fixed | **0.04 m** | 10s | 0.02 | 400k |
-| 3a | s3a_arc15 | π ± 15° | 0.08 m | 10s | 0.02 | 200k |
-| 3b | s3b_arc30 | π ± 30° | 0.08 m | 10s | 0.02 | 250k |
-| 3c | s3c_arc60 | π ± 60° | 0.08 m | 10s | 0.02 | 350k |
-| 3d | s3d_arc90 | π ± 90° (=[π/2,3π/2]) | 0.08 m | **20s** | **0.008** | 500k |
+| Stage | tag | theta 범위 | success_radius | episode_seconds | max_steps |
+|---|---|---|---|---|---|
+| 1 | s1_forward | π fixed | 0.08 m | 10s | 400k |
+| 2 | s2_anchor | π fixed | **0.04 m** | 10s | 400k |
+| 3a | s3a_arc15 | π ± 15° | 0.08 m | 10s | 200k |
+| 3b | s3b_arc30 | π ± 30° | 0.08 m | 10s | 250k |
+| 3c | s3c_arc60 | π ± 60° | 0.08 m | 10s | 350k |
+| 3d | s3d_arc90 | π ± 90° (=[π/2,3π/2]) | 0.08 m | **20s** | 500k |
 
-자동 진행: 최근 100 ep `reach_rate ≥ 90%` → 학습 조기 종료 → 다음 단계로 fine-tune. max_steps는 안전장치. STAGES 딕셔너리는 stage별로 `episode_seconds`, `align_weight` 오버라이드 가능 (`curriculum.py`).
+(v1~v4에는 stage별 `align_weight` 가중치 — 1·2·3a·3b·3c는 0.02, 3d는 v3에서 0.008. v5에서 `align_weight` 제거하고 곱셈 보상으로 통합.)
 
-v3 → v4 변화: Stage 3을 4단계로 분화 (점진적 회전량 증가) + action history 8 추가. 직진 정책에서 회전 정책으로 *부드럽게* 이행하도록 유도.
+자동 진행: 최근 100 ep `reach_rate ≥ 90%` → 학습 조기 종료 → 다음 단계로 fine-tune. max_steps는 안전장치. STAGES 딕셔너리는 stage별로 `episode_seconds` 오버라이드 가능 (`curriculum.py`).
+
+v3 → v4 변화: Stage 3을 4단계로 분화 (점진적 회전량 증가) + action history 8 추가.
+v4 → v5 변화: 보상 함수 변경 (align을 progress와 곱). align_weight 인자·s3d 오버라이드 제거.
 
 **Full circle (θ ∈ [-π, π])은 사용자 결정으로 제외** — 단일 모터로 180° 회전 후 추적은 비현실적.
 
@@ -156,20 +163,20 @@ python3 train.py --tag s1_forward \
 
 ---
 
-## 학습 결과 — v1, v2, v3, v4
+## 학습 결과 — v1 ~ v5
 
-GitHub Release: [`models-v1`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v1), [`models-v2`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v2). v3은 효과 없어 release 안 함. v4 진행 중/예정.
+GitHub Release: [`models-v1`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v1), [`models-v2`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v2). v3은 효과 없어 release 안 함. v4 평가 미실시. v5 release 예정 (`models-v5`).
 
 ### 버전별 변경점
 
-| 변경 | v1 | v2 | v3 | v4 (진행 예정) |
-|---|---|---|---|---|
-| align reward | 없음 | `align_weight=0.02` | s3d만 0.008 | (v3 유지) |
-| Stage 3 분할 | 단일 ±90° | s3a (±15°) → s3b (±90°) | (v2 유지) | **s3a/b/c/d (15°→30°→60°→90°)** |
-| s3 마지막 ep 길이 | 10s | 10s | 20s | (v3 유지) |
-| ent_coef init | "auto" (1.0) | `auto_0.1` | `auto_0.1` | `auto_0.1` |
-| **action history obs** | 없음 | 없음 | 없음 | **8 step (obs 11D→19D)** |
-| TB metric | SB3 default | + `fish/*` | (v2 유지) | (v2 유지) |
+| 변경 | v1 | v2 | v3 | v4 | v5 |
+|---|---|---|---|---|---|
+| align reward | 없음 | `+ 0.02·align` 가산 | s3d만 0.008 | (v3 유지) | **`progress × (0.5+0.5·align)` 곱셈, prog>0일 때만** |
+| Stage 3 분할 | 단일 ±90° | s3a (±15°) → s3b (±90°) | (v2 유지) | **s3a/b/c/d (15°→30°→60°→90°)** | (v4 유지) |
+| s3 마지막 ep 길이 | 10s | 10s | 20s | (v3 유지) | (v3 유지) |
+| ent_coef init | "auto" (1.0) | `auto_0.1` | `auto_0.1` | `auto_0.1` | `auto_0.1` |
+| **action history obs** | 없음 | 없음 | 없음 | **8 step (obs 11D→19D)** | (v4 유지) |
+| TB metric | SB3 default | + `fish/*` | (v2 유지) | (v2 유지) | (v2 유지) |
 
 ### Rollout 평가 (50 ep, deterministic, ±90° head arc 분포)
 
@@ -178,6 +185,21 @@ GitHub Release: [`models-v1`](https://github.com/sourceyoo/RL_robot/releases/tag
 | v1 | 100% / +9.22 | 100% / +9.64 | — | **24%** | 600k 학습 |
 | v2 | 100% / +10.38 | 100% / +10.81 | 84% | **24%** | align reward 추가 |
 | v3 | (v2 동일) | (v2 동일) | (v2 동일) | **24%** | s3b만 20s ep — 여전히 같음 |
+| v4 | — | — | — | — | 50 ep 평가 미실시 |
+| v5 | 100%¹ | 100%¹ | 91%¹ | **20%¹** | 50 ep 평가 미실시. ¹학습 마지막 100 ep 윈도우. s3b 78%, s3c 36% (max_steps 도달, 90% 못 넘음) |
+
+### v5 학습 진행 (curriculum 마지막 100 ep 윈도우)
+
+| Stage | 종료 step | reach_rate | 결과 |
+|---|---|---|---|
+| s1_forward | 30k | 100% | 조기 종료 ✓ |
+| s2_anchor | 30k | 100% | 조기 종료 ✓ |
+| s3a_arc15 (±15°) | 150k | 91% | 조기 종료 ✓ |
+| s3b_arc30 (±30°) | 250k | 78% | max 도달, 90% 못 넘음 |
+| s3c_arc60 (±60°) | 350k | 36% | max 도달, 정체 |
+| s3d_arc90 (±90°) | 500k | **20%** | max 도달, 후반 오히려 하락(28→20%) |
+
+v5 핵심 진단: `fish/avg_align ≈ −0.5` (s3d 종료 시점). 곱셈 보상이 의도와 정반대로 작용 — 멀어질 때 풀 페널티 유지하는 비대칭 때문에, **머리를 목표 반대 방향으로 둔 채 후진 모드로 가까워지는** 정책 mode에 빠짐. v3·v4의 24% 대비 더 낮은 20%로 악화.
 
 ### 핵심 통찰 — v3 진단의 결정적 발견 (`yaw_test.py`)
 
@@ -193,10 +215,11 @@ GitHub Release: [`models-v1`](https://github.com/sourceyoo/RL_robot/releases/tag
 
 ### 다른 통찰
 
-- ✅ **Stage 1·2** s1 30k + s2 30k = 60k step에 100%. align reward 누적이 ep_rew를 정확히 +1.2 (= 60 step × 0.02 × 평균 align) 올림 — 보상 일관성.
-- ✅ **±15° head arc 84%** — s2→s3a fine-tune이 효율적.
-- ❌ **±90° head arc는 v1/v2/v3 모두 24%** — ep 길이 늘려도 회전 능력 자체가 안 늘어남. **v4의 action history obs로 시간적 비대칭 학습 enable 시도**.
-- ❗ **ent_coef collapse** v2/v3 모두 동일 (0.1 init → 0.0006~0.0007). `auto_0.1`은 floor 아닌 초기값. 진짜 floor가 필요하면 custom callback.
+- ✅ **Stage 1·2** s1 30k + s2 30k = 60k step에 100% (v5도 동일). align reward 누적이 ep_rew를 정확히 +1.2 (= 60 step × 0.02 × 평균 align) 올림 — 보상 일관성 (v2~v4 한정, v5는 곱셈식이라 ep_rew 절대값 다름).
+- ✅ **±15° head arc** — v2 84%, v5 91%. s2→s3a fine-tune이 효율적.
+- ❌ **±90° head arc 정체** — v1/v2/v3 24%, v5 20%. ep 길이·action history·곱셈 보상 어떤 변경도 천장 못 뚫음.
+- ❌ **v5 곱셈 보상의 역효과** — `prog>0일 때만 align factor` 비대칭 때문에, 머리를 반대로 두고 후진 진행하는 mode 학습 (avg_align −0.5). 정렬 신호로 작동하지 않고 정렬 회피 신호가 됨.
+- ❗ **ent_coef collapse** v2/v3/v5 모두 동일 (0.1 init → 0.0004~0.0007). `auto_0.1`은 floor 아닌 초기값. 진짜 floor가 필요하면 custom callback.
 
 ---
 
@@ -324,27 +347,24 @@ tar -xzf runs-models-vN.tar.gz -C sim/
 
 ## 다음 후보 (미해결)
 
-### 진행 예정 — v4 (action history + Stage 3 분화)
+### v5까지 시도된 카드 (요약)
 
-v3 진단 결과 물리적 한계 X, 학습 표현력 부족이 본질. 처방:
+| 카드 | 결과 |
+|---|---|
+| v2 — align 가산 reward (`+ 0.02·align`) | s3 ±90° 24% (변화 없음) |
+| v3 — s3d만 ep 20s + align_weight 0.008 | 24% (변화 없음) |
+| v4 — action history obs (N=8) + Stage 3 4단계 분화 | 평가 미실시 (v5로 이행) |
+| v5 — align을 progress와 곱셈 결합 | **20%로 악화**. avg_align −0.5 (반대 정렬 mode). |
 
-| 변경 | 값 | 이유 |
-|---|---|---|
-| **obs에 action history 추가** | N=8 (obs 19D) | D2 같은 *시간적 비대칭 ctrl 패턴* 발견 enable. yaw_test.py가 본질 진단. |
-| **Stage 3 4단계 분화** | 15° → 30° → 60° → 90° | 직진 정책에서 회전 정책으로 부드러운 fine-tune chain |
-| 기존 align_weight, ent_coef 등 | v3 유지 | |
+### 다음 후속 카드
 
-⚠ obs 차원 변경으로 **이전 model.zip 호환 안 됨** — Stage 1부터 fresh 학습 (~50~75분 예상).
-
-### v4로도 안 풀리면 후속 카드
-
-1. **HER (Hindsight Experience Replay)** — 실패 ep도 "그때 닿은 곳을 목표였다고" 라벨링해 성공 경험으로. SB3 `HerReplayBuffer` 지원. env interface 수정 필요 (Dict obs).
-2. **Random initial yaw reset** — 시작 yaw 다양화로 회전 능력 강요.
-3. **align reward를 progress와 곱** — `progress × 10 × (0.5 + 0.5 × align)`. 정렬됐을 때만 progress 보상 가산. stay-still 위험 자동 해소.
-4. **fin actuator 추가** — 단일 모터 한계 자체를 풂. 모델·env 큰 변경. (사용자 명시 제외)
-5. **Custom EntCoefFloorCallback** — `log_ent_coef` 강제 floor. SB3 native 불가능 → callback 자작.
+1. **곱셈 보상 롤백** — v5의 곱셈식이 역효과를 냈음. v4의 가산식 복귀 + (선택) align factor의 비대칭성을 제거 (`prog<0`일 때도 align factor 적용)하거나, `align<0`일 때 **반대 정렬 강한 페널티** (예: `prog *= max(0, align)` — 정렬 안 되면 progress 보상 0).
+2. **Random initial yaw reset** — 시작 yaw 다양화로 회전 능력 강요. 가장 가벼운 변경.
+3. **HER (Hindsight Experience Replay)** — 실패 ep도 "그때 닿은 곳을 목표였다고" 라벨링해 성공 경험으로. SB3 `HerReplayBuffer` 지원. env interface 수정 필요 (Dict obs).
+4. **Custom EntCoefFloorCallback** — `log_ent_coef` 강제 floor. v2/v3/v5 모두 0.0004~0.0007로 collapse, 탐색 부족 의심. SB3 native 불가능 → callback 자작.
+5. **fin actuator 추가** — 단일 모터 한계 자체를 풂. 모델·env 큰 변경. (사용자 명시 제외)
 6. **ANN surrogate (Lighthill 콜백 또는 Zhong 2026 방식)** — fluid model 한계 우회. 실물 motion capture 필요.
 
 ### 단일 지느러미의 천장
 
-`yaw_test.py` 측정으로 **단일 모터+passive fin의 yaw rate 물리 상한 ~4.6°/s** 확인. ±90° 회전은 20s 안에 가능. 학습이 이 능력을 *발견하느냐*가 천장 결정. v4가 표현력 부족 해소 시도. v4도 부족하면 HER이 다음 핵심 카드.
+`yaw_test.py` 측정으로 **단일 모터+passive fin의 yaw rate 물리 상한 ~4.6°/s** 확인. ±90° 회전은 20s 안에 가능. 학습이 이 능력을 *발견하느냐*가 천장 결정. v4·v5의 "표현력 + 보상 형태" 변경으로는 못 뚫음. 다음 우선순위는 **(1) 보상 롤백/단순화** → **(2) HER 또는 random yaw reset** 조합.
