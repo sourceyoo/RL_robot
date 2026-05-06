@@ -42,8 +42,11 @@ PI = math.pi
 
 # v4: action history obs 추가 (시간적 비대칭 ctrl 패턴 학습 enable).
 # yaw_test.py 진단으로 D2 패턴 등 비대칭이 yaw 회전 핵심임 확인.
-# 4 history는 1/2 wag cycle (3Hz × 17step/cycle / 2 ≈ 8) 커버.
-ACTION_HISTORY_N = 8
+# v11: 8 → 16. v8/v9/v10 모두 ent_floor 카드로 천장 못 뚫음 — 진짜 병목 = 정책
+# 표현력. N=8은 1/2 wag cycle만 커버 (3Hz × 17 step/cycle / 2 ≈ 8).
+# N=16은 1 wag cycle 커버 → D2 패턴(75/25 비대칭 stroke) 표현 가능.
+# obs dim: 11 + 16 = 27.
+ACTION_HISTORY_N = 16
 
 # v10: Stage별 차등 ent_floor.
 # v8 floor 0.005 / v9 floor 0.002 결과 종합 — 단일 floor로 전체 cover 불가 입증.
@@ -130,7 +133,7 @@ def main():
     plot_dir = sim_dir / "plots"
     # 모든 단계의 tensorboard log를 model3_vN 폴더 안에 묶어 TB UI에서 v별 비교 가능.
     # 새 학습 시작할 때마다 v숫자를 올려도 되고, 같은 v 안에서 stage 진행도 가능.
-    tb_dir = sim_dir / "tb_logs" / "model3_v10"
+    tb_dir = sim_dir / "tb_logs" / "model3_v11"
     tb_dir.mkdir(parents=True, exist_ok=True)
 
     # Viewer thread 단 한 번만 — 첫 stage env로 시작, 모든 stage 통과
