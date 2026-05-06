@@ -45,6 +45,11 @@ PI = math.pi
 # 4 history는 1/2 wag cycle (3Hz × 17step/cycle / 2 ≈ 8) 커버.
 ACTION_HISTORY_N = 8
 
+# v10: Stage별 차등 ent_floor.
+# v8 floor 0.005 / v9 floor 0.002 결과 종합 — 단일 floor로 전체 cover 불가 입증.
+# 작은 회전(s3a/b)은 정확도 stage → 낮은 floor (0.002~0.003), 큰 회전(s3c/d)은
+# 비대칭 ctrl 패턴 발견 위해 높은 floor (0.005~0.006). v7 floor 0.02는 재앙이라
+# 상한 보수적으로.
 STAGES = [
     {
         "tag": "s1_forward",
@@ -52,6 +57,7 @@ STAGES = [
         "theta_min": PI, "theta_max": PI,
         "success_radius": 0.08,
         "max_steps": 400_000,
+        "ent_floor": 0.002,
     },
     {
         "tag": "s2_anchor",
@@ -59,6 +65,7 @@ STAGES = [
         "theta_min": PI, "theta_max": PI,
         "success_radius": 0.04,
         "max_steps": 400_000,
+        "ent_floor": 0.002,
     },
     # v6: Stage 3 전체 ep_seconds 30s (10s/20s → 30s 통일).
     # yaw_test.py D2 best 4.6°/s × 30s = 138° 회전 가능 → ±90° 회전+추진(0.5m, 1.8s)에 9s 여유.
@@ -69,6 +76,7 @@ STAGES = [
         "success_radius": 0.08,
         "max_steps": 200_000,
         "episode_seconds": 30.0,
+        "ent_floor": 0.002,
     },
     {
         "tag": "s3b_arc30",
@@ -77,6 +85,7 @@ STAGES = [
         "success_radius": 0.08,
         "max_steps": 250_000,
         "episode_seconds": 30.0,
+        "ent_floor": 0.003,
     },
     {
         "tag": "s3c_arc60",
@@ -85,6 +94,7 @@ STAGES = [
         "success_radius": 0.08,
         "max_steps": 350_000,
         "episode_seconds": 30.0,
+        "ent_floor": 0.005,
     },
     {
         "tag": "s3d_arc90",
@@ -93,6 +103,7 @@ STAGES = [
         "success_radius": 0.08,
         "max_steps": 500_000,
         "episode_seconds": 30.0,
+        "ent_floor": 0.006,
     },
 ]
 
@@ -119,7 +130,7 @@ def main():
     plot_dir = sim_dir / "plots"
     # 모든 단계의 tensorboard log를 model3_vN 폴더 안에 묶어 TB UI에서 v별 비교 가능.
     # 새 학습 시작할 때마다 v숫자를 올려도 되고, 같은 v 안에서 stage 진행도 가능.
-    tb_dir = sim_dir / "tb_logs" / "model3_v9"
+    tb_dir = sim_dir / "tb_logs" / "model3_v10"
     tb_dir.mkdir(parents=True, exist_ok=True)
 
     # Viewer thread 단 한 번만 — 첫 stage env로 시작, 모든 stage 통과
@@ -188,9 +199,11 @@ def main():
                 threshold=args.threshold, window=100,
                 check_every=5000, min_steps=args.min_steps,
             ))
-            # v8 floor 0.005는 mode 정상화 효과 ✓ but s3a 74%(v5/v7 90%대)로 정확도 stage 떨어짐.
-            # v9: 0.002로 낮춤 — 작은 회전엔 결정적 학습 허용, 큰 회전엔 floor 효과 잔존 가설.
-            callbacks.append(EntCoefFloorCallback(floor=0.002))
+            # v10: stage별 차등 floor. 작은 회전(s3a/b 0.002~0.003)은 정확도, 큰 회전(s3c 0.005,
+            # s3d 0.006)은 비대칭 ctrl 패턴 발견 위해 entropy 유지. v8 0.005·v9 0.002 모두
+            # 한쪽만 만족했던 결과의 종합.
+            callbacks.append(EntCoefFloorCallback(floor=stage["ent_floor"]))
+            print(f"[curriculum] ent_floor = {stage['ent_floor']}")
             cb = CallbackList(callbacks) if callbacks else None
 
             model.learn(

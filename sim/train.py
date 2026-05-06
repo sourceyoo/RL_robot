@@ -310,6 +310,8 @@ def main():
                    help="reach_rate 측정용 최근 에피소드 수")
     p.add_argument("--check-every", type=int, default=5000,
                    help="reach_rate 체크 주기 step")
+    p.add_argument("--ent-floor", type=float, default=0.0,
+                   help="EntCoefFloorCallback floor (0이면 비활성). v10에서 stage별 차등.")
     args = p.parse_args()
 
     run_dir = Path(__file__).parent / "runs" / args.tag
@@ -361,6 +363,10 @@ def main():
             check_every=args.check_every,
         ))
         print(f"[train] curriculum: reach_rate ≥ {args.success_threshold:.0%}이면 조기 종료")
+
+    if args.ent_floor > 0:
+        callbacks.append(EntCoefFloorCallback(floor=args.ent_floor))
+        print(f"[train] ent_coef floor = {args.ent_floor}")
 
     cb = CallbackList(callbacks) if callbacks else None
 
