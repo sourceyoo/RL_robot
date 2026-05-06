@@ -165,7 +165,17 @@ python3 train.py --tag s1_forward \
 
 ## 학습 결과 — v1 ~ v10
 
-GitHub Release: [`models-v1`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v1), [`models-v2`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v2), [`models-v5`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v5) (실패 기록). v3·v4·v6·v7·v8·v9·v10 release 안 함.
+GitHub Release: [`models-v1`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v1), [`models-v2`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v2), [`models-v5`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v5) (실패 기록), [`models-v10`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v10) (그룹 C 대표). v3·v4·v6·v7·v8·v9 release 안 함.
+
+### 결별 그룹화
+
+| 그룹 | 멤버 | 특징 | s3d 천장 | 대표 release |
+|---|---|---|---|---|
+| **A. Baseline + 가산식 reward** | v1 / v2 / v3 | 가산항 align (`+0.02·align`) 시도 | 24% | `models-v1`, `models-v2` |
+| **B. 곱셈 보상 실패** | v5 / v6 / v7 | mode collapse (머리 반대 / 도망) | 16~20% | `models-v5` |
+| **C. v4 가산식 복귀 + ent_floor 실험** | v8 / v9 / v10 | floor 균등(0.005/0.002) + 차등. ent_floor 카드 종결 | 13~17% | `models-v10` |
+
+각 release는 그룹의 binary를 보유 (이전 학습 산출물 정리는 별도 안 함). 같은 그룹 내 다른 버전은 tb_logs(스칼라 메트릭)와 commit log로 추적.
 
 ### 버전별 변경점
 
