@@ -163,20 +163,20 @@ python3 train.py --tag s1_forward \
 
 ---
 
-## 학습 결과 — v1 ~ v8
+## 학습 결과 — v1 ~ v9
 
-GitHub Release: [`models-v1`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v1), [`models-v2`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v2), [`models-v5`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v5) (실패 기록). v3·v4·v6·v7·v8 release 안 함.
+GitHub Release: [`models-v1`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v1), [`models-v2`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v2), [`models-v5`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v5) (실패 기록). v3·v4·v6·v7·v8·v9 release 안 함.
 
 ### 버전별 변경점
 
-| 변경 | v1 | v2 | v3 | v4 | v5 | v6 | v7 | v8 |
-|---|---|---|---|---|---|---|---|---|
-| align reward | 없음 | `+0.02·align` | s3d만 0.008 | (v3) | **`prog>0`만 곱** `(0.5+0.5·align)` | (v5) | **대칭 곱** (prog 부호 무관) | **v4 가산식 복귀** `+0.02·align` |
-| Stage 3 분할 | 단일 ±90° | s3a→s3b | (v2) | **s3a/b/c/d (15→30→60→90°)** | (v4) | (v4) | (v4) | (v4) |
-| s3 ep 길이 | 10s | 10s | s3d 20s | (v3) | (v3) | **s3a~d 30s 통일** | (v6) | (v6) |
-| ent_coef init | "auto" (1.0) | `auto_0.1` | `auto_0.1` | `auto_0.1` | `auto_0.1` | (v5) | (v5) | (v5) |
-| **action history obs** | 없음 | 없음 | 없음 | **8 step (19D)** | (v4) | (v4) | (v4) | (v4) |
-| **EntCoefFloorCallback** | 없음 | 없음 | 없음 | 없음 | 없음 | 없음 | **floor 0.02** | **floor 0.005** |
+| 변경 | v1 | v2 | v3 | v4 | v5 | v6 | v7 | v8 | v9 |
+|---|---|---|---|---|---|---|---|---|---|
+| align reward | 없음 | `+0.02·align` | s3d만 0.008 | (v3) | **`prog>0`만 곱** `(0.5+0.5·align)` | (v5) | **대칭 곱** (prog 부호 무관) | **v4 가산식 복귀** `+0.02·align` | (v8) |
+| Stage 3 분할 | 단일 ±90° | s3a→s3b | (v2) | **s3a/b/c/d (15→30→60→90°)** | (v4) | (v4) | (v4) | (v4) | (v4) |
+| s3 ep 길이 | 10s | 10s | s3d 20s | (v3) | (v3) | **s3a~d 30s 통일** | (v6) | (v6) | (v6) |
+| ent_coef init | "auto" (1.0) | `auto_0.1` | `auto_0.1` | `auto_0.1` | `auto_0.1` | (v5) | (v5) | (v5) | (v5) |
+| **action history obs** | 없음 | 없음 | 없음 | **8 step (19D)** | (v4) | (v4) | (v4) | (v4) | (v4) |
+| **EntCoefFloorCallback** | 없음 | 없음 | 없음 | 없음 | 없음 | 없음 | **floor 0.02** | **floor 0.005** | **floor 0.002** |
 
 ### s3d (±90°) 결과 — 마지막 100 ep 윈도우
 
@@ -189,15 +189,16 @@ GitHub Release: [`models-v1`](https://github.com/sourceyoo/RL_robot/releases/tag
 | v6 | 20% | −0.10 | 0.31 m | 모호 | 시간만 늘림, 학습 미수렴 |
 | v7 | 16% | −0.73 | **6.27 m** | **도망** ⚠ | 대칭 곱 + ent floor 0.02, 재앙 |
 | **v8** | **17%** | **+0.58** | **0.57 m** | **목표 향함** ✓ | **mode 정상화 첫 성공, 천장 미달성** |
+| v9 | 13% | +0.52 | 0.42 m | 목표 향함 | floor 0.002 — 큰 회전 entropy 부족, s3c·d 후퇴 |
 
 ### Stage 진행 비교
 
-| Stage | v5 | v6 | v7 | **v8** |
-|---|---|---|---|---|
-| s3a_arc15 (±15°) | 91% (150k 조기) | 90% (185k 조기) | 92% (115k 조기) | 74% (200k max) |
-| s3b_arc30 (±30°) | 78% (max) | 71% (max) | 59% (max) | 70% (max) |
-| s3c_arc60 (±60°) | 36% (max) | 35% (max) | 31% (max) | **46% (max)** ⭐ |
-| s3d_arc90 (±90°) | 20% | 20% | 16% | 17% |
+| Stage | v5 | v6 | v7 | v8 | **v9** |
+|---|---|---|---|---|---|
+| s3a_arc15 (±15°) | 91% (150k 조기) | 90% (185k 조기) | 92% (115k 조기) | 74% (200k max) | **90% (125k 조기)** ⭐ |
+| s3b_arc30 (±30°) | 78% (max) | 71% (max) | 59% (max) | 70% (max) | 75% (max) |
+| s3c_arc60 (±60°) | 36% (max) | 35% (max) | 31% (max) | **46% (max)** ⭐ | 29% (max) |
+| s3d_arc90 (±90°) | 20% | 20% | 16% | 17% | 13% |
 
 ### v8 핵심 진단 — 병목 재정의
 
@@ -206,6 +207,19 @@ v8 시점: **머리 방향 OK (avg_align +0.58), 그러나 fish가 회전+추진
 - ep 26s 동안 final_distance 0.57m → 거의 못 움직임
 - s3c 46% (이전 best 36%) → ±60°까진 진보. ±90°에서 천장.
 - → 진짜 병목은 **정책이 yaw_test.py D2 같은 시간적 비대칭 ctrl 패턴을 발견 못 함**. 보상은 옳은데 policy가 동작을 못 만듦.
+
+### v9 핵심 진단 — ent_floor의 stage 의존성
+
+v8 가설("s3a 74% = floor 0.005 entropy 과잉")은 **확인됨**: floor 0.002로 낮추니 **s3a 74→90% (125k 조기 종료)**. 작은 회전·정확도 stage엔 결정적 진전.
+
+그러나 큰 회전 stage에서 역효과:
+- s3c 46→29% (−17%p), s3d 17→13% (−4%p)
+- ent_coef 추이: s3a까진 0.004대 (자동 감소 중, floor 미도달) → s3b부터 0.002 floor 도달 → s3c·d 내내 0.002 고정
+- 하필 **floor 강제 시점이 큰 회전 stage 진입과 겹쳐** 탐색 죽임. 0.002는 ±60°/±90° mode 발견에 entropy 부족.
+
+→ **단일 floor로 전체 cover 불가**. 작은 회전(s3a~b)은 0.002~0.003, 큰 회전(s3c~d)은 0.005 이상이 적합.
+
+부수 관찰: v9 s3d `ep_rew_mean` +14.24 (v8 +12.20) — reach 더 낮은데 보상 더 높음. align 누적(ep 26초)으로 stay-aligned 정책 강화. final_dist 0.42m (v8 0.57m)로 더 가까이 가지만 도달은 못 함.
 
 ### 핵심 통찰 — v3 진단의 결정적 발견 (`yaw_test.py`)
 
@@ -225,10 +239,10 @@ v8 시점: **머리 방향 OK (avg_align +0.58), 그러나 fish가 회전+추진
 - ✅ **±15° head arc** — v2 84%, v5/v6/v7 90%대. s2→s3a fine-tune 효율적.
 - ✅ **v8 mode 정상화** — avg_align 처음 양수(+0.58), 도망/반대 mode 사라짐. 가산식 + EntCoefFloorCallback 조합 효과.
 - ✅ **v8 s3c 46%** — 이전 best 36% 대비 +10%p. ±60°까진 진보.
-- ❌ **±90° head arc 정체** — v1~v8 모두 16~24%. 보상·algorithm·obs 어느 변경도 천장 못 뚫음.
+- ❌ **±90° head arc 정체** — v1~v9 모두 13~24%. 보상·algorithm·obs·ent floor 어느 변경도 천장 못 뚫음.
 - ❌ **v5/v7 곱셈 보상의 역효과** — 비대칭(v5)은 머리 반대 + 후진, 대칭(v7)은 도망 mode. 함정 #8.
-- ❗ **ent_coef collapse 해결** — v2~v6 모두 0.0004~0.0007로 죽었으나 v7 floor 0.02는 결정적 학습 방해, **v8 floor 0.005가 균형점**.
-- ❗ **v8 s3a 74%로 떨어짐** — v5/v7의 90%대보다 낮음. ent floor 0.005가 작은 회전(정확도 요구) stage엔 entropy 과잉 의심. v9에서 floor 더 낮춰 검증 예정.
+- ❗ **ent_coef collapse 해결** — v2~v6 모두 0.0004~0.0007로 죽었으나 v7 floor 0.02는 결정적 학습 방해, v8 floor 0.005가 mode 정상화 균형점.
+- ❗ **v9 s3a 90% 회복** — v8 가설(floor 0.005 entropy 과잉) 입증. floor 0.002로 낮추니 작은 회전 결정적 학습 회복(125k 조기). 그러나 같은 floor가 s3c·d에선 entropy 부족으로 −17%p / −4%p 후퇴 → **floor는 stage 의존적**.
 
 ---
 
@@ -357,7 +371,7 @@ tar -xzf runs-models-vN.tar.gz -C sim/
 
 ## 다음 후보 (미해결)
 
-### v8까지 시도된 카드 (요약)
+### v9까지 시도된 카드 (요약)
 
 | 카드 | 결과 |
 |---|---|
@@ -367,21 +381,23 @@ tar -xzf runs-models-vN.tar.gz -C sim/
 | v5 — align을 progress와 곱셈 (비대칭, prog>0만) | **20%로 악화**. avg_align −0.5 (머리 반대+후진) |
 | v6 — v5 + ep 30s 통일 | 20% (변화 없음). 시간 부족 가설 reject. |
 | v7 — 대칭 곱 + EntCoefFloorCallback floor 0.02 | **16%로 더 악화**. avg_align −0.73, final_dist 6m (도망 mode) |
-| **v8 — v4 가산식 복귀 + ent floor 0.005** | **17%, avg_align +0.58 (mode 정상화). s3c 46%로 +10%p** |
+| v8 — v4 가산식 복귀 + ent floor 0.005 | 17%, avg_align +0.58 (mode 정상화). s3c 46%로 +10%p |
+| **v9 — ent floor 0.005 → 0.002** | **s3a 74→90% ⭐ (가설 입증), s3c 46→29% / s3d 17→13% 후퇴. floor stage 의존성 확인** |
 
 ### 다음 후속 카드
 
-진짜 병목 재정의 (v8 시점): 머리 방향은 OK(+0.58)지만 *회전+추진 동작 시퀀스 자체를 학습 못 함*.
+v9 결과로 병목 재재정의: **단일 ent_floor로 전체 stage cover 불가**. 작은 회전엔 0.002, 큰 회전엔 0.005가 적합 — 모순.
 
-1. **ent floor 더 낮춤 (v9)** — 0.005 → 0.001~0.002. v8 s3a 74%(이전 90%대)가 entropy 과잉 의심. 작은 회전에 결정적 학습 허용 + 큰 회전엔 floor 효과 잔존 가설.
-2. **action history N 확대** — 8 → 16 또는 24. D2 패턴(75/25 비대칭 stroke) 표현엔 더 긴 history 필요. obs dim 19 → 27/35.
-3. **align_weight ep에 비례** — 0.02 → 0.0067 (30s ep). stay-still 위험 정량적 감소. v8에서 stay-still mode 안 보이니 우선순위 낮음.
-4. **HER (Hindsight Experience Replay)** — env Dict obs 큰 변경. 가장 큰 카드. v8 위에 얹기.
-5. **CrossQ (BatchNorm + target net 제거)** — SAC 변형, sample efficiency. 보상 안정된 v8 이후 시도 가능. SB3 native 미지원.
-6. **Custom 보상 — yaw 변화 자체를 보상** — 회전 시도 자체에 인센티브. 다만 신호 noise 우려.
-7. **fin actuator 추가** — 단일 모터 한계 자체를 풂. (사용자 명시 제외)
-8. **ANN surrogate (Lighthill / Zhong 2026)** — fluid model 한계 우회. 실물 motion capture 필요.
+1. **Stage별 차등 ent_floor** — s3a/b 0.002, s3c/d 0.005~0.008. `EntCoefFloorCallback`에 stage tag별 floor 매핑 추가. 가장 직접적 후속.
+2. **Entropy schedule (cosine/linear decay)** — floor 대신 stage 시작 시 0.05 → 종료 시 0.005 감쇠. 큰 회전 초기 탐색 보장하면서 후반 학습.
+3. **action history N 확대** — 8 → 16 또는 24. D2 패턴(75/25 비대칭 stroke) 표현엔 더 긴 history 필요. obs dim 19 → 27/35. v9 결과로 entropy 카드 한계 드러난 만큼 obs 확장이 더 유망.
+4. **align_weight ep에 비례** — 0.02 → 0.0067 (30s ep). stay-still 위험 정량적 감소. v8/v9에서 stay-still mode 안 보이니 우선순위 낮음.
+5. **HER (Hindsight Experience Replay)** — env Dict obs 큰 변경. 가장 큰 카드. v8/v9 위에 얹기.
+6. **CrossQ (BatchNorm + target net 제거)** — SAC 변형, sample efficiency. SB3 native 미지원.
+7. **Custom 보상 — yaw 변화 자체를 보상** — 회전 시도 자체에 인센티브. 다만 신호 noise 우려.
+8. **fin actuator 추가** — 단일 모터 한계 자체를 풂. (사용자 명시 제외)
+9. **ANN surrogate (Lighthill / Zhong 2026)** — fluid model 한계 우회. 실물 motion capture 필요.
 
 ### 단일 지느러미의 천장
 
-`yaw_test.py` 측정으로 **단일 모터+passive fin의 yaw rate 물리 상한 ~4.6°/s** 확인. ±90° 회전은 20s 안에 가능. v1~v8 모두 16~24%로 천장 못 뚫음. v8에서 처음으로 "올바른 mode" 회복 → 다음 카드는 *동작 시퀀스 발견* 강화 (ent floor 조정, action history 확장, HER) 방향.
+`yaw_test.py` 측정으로 **단일 모터+passive fin의 yaw rate 물리 상한 ~4.6°/s** 확인. ±90° 회전은 20s 안에 가능. v1~v9 모두 13~24%로 천장 못 뚫음. v8에서 처음으로 "올바른 mode" 회복, v9에서 작은 회전(s3a) 결정적 학습 회복 — 그러나 작은 회전·큰 회전 동시 만족하는 단일 hyperparam 없음. 다음 카드는 *stage별 차등화* 또는 *obs/algorithm 확장* (action history N↑, HER, entropy schedule) 방향.
