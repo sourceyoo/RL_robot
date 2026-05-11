@@ -173,17 +173,28 @@ class FishSwimEnv(gym.Env):
         # v15: reach 보너스 5 → 10. align_weight (10s 0.02 / 30s 0.012)는 v14 그대로.
         # v14의 align dominance(7.4:1) 완화 위해 reach 절대값만 2배 강화.
         # v21-A: yaw 변화 자체 보상 추가 (`+YAW_W·|yaw_rate|`). v20 진단(entropy ↑로도
-        # 추진 학습 못 함, "정렬만 mode") 직접 대응. 회전 시도 자체에 인센티브 → 정책의
-        # "정렬만, 추진 안 함" mode 깨고 회전·추진 시퀀스 학습 강제.
-        # v22: v21 + s3d 1M fine-tune → 천장 32% / peak 50%, 모든 v best 카드.
-        YAW_W = 0.005
+        # 추진 학습 못 함, "정렬만 mode") 직접 대응. YAW_W=0.005로 천장 단독 돌파.
+        # v22: v21 + s3d 1M fine-tune (32%, peak 50%).
+        # v23-A reject: YAW_W 0.007 (1.4배 |·|) — 정점 41% but end 23% (700k spike).
+        # v24-A signed yaw 0.005: 진동 해결 ✓ but 천장 미돌파 (end 28%, peak 35%).
+        # final_dist 0.599m best. 진단: signed로 신호 보수화 → mode catalysis ↓.
+        # v25-A: signed yaw + YAW_W 0.005 → 0.007. signed의 안정성 × v23-A 신호 강도.
+        # 가설: signed면 좌우 흔들기 페널티 작동하므로 weight ↑해도 진동 안 일어남.
+        # d(align)/d(yaw) = head_perp · target_dir, head_perp = (sin(yaw), cos(yaw))
+        # (axis (0,0,-1) 보정 반영). rel_norm < 1e-6면 target_dir = 0 → sign = 0.
+        YAW_W = 0.007
         yaw_rate = float(self.data.qvel[IDX_YAW])
+        if rel_norm > 1e-6:
+            head_perp = np.array([np.sin(yaw), np.cos(yaw)])
+            yaw_dir_sign = float(np.sign(float(np.dot(head_perp, rel / rel_norm))))
+        else:
+            yaw_dir_sign = 0.0
         reward = (
             float(progress * 10.0)
             + (10.0 if reached else 0.0)
             - ctrl_cost
             + self.align_weight * align
-            + YAW_W * abs(yaw_rate)
+            + YAW_W * yaw_rate * yaw_dir_sign
         )
 
         self._prev_distance = distance

@@ -141,8 +141,11 @@ def main():
     plot_dir = sim_dir / "plots"
     # 모든 단계의 tensorboard log를 model3_vN 폴더 안에 묶어 TB UI에서 v별 비교 가능.
     # 새 학습 시작할 때마다 v숫자를 올려도 되고, 같은 v 안에서 stage 진행도 가능.
-    # v22: v21 yaw reward + s3d 1M fine-tune → s3d 32% / peak 50% (모든 v best 카드).
-    tb_dir = sim_dir / "tb_logs" / "model3_v22"
+    # v24-A signed yaw — 진동 해결 ✓ but 천장 미돌파 (end 28%, peak 35%).
+    # v25-A: signed yaw + YAW_W 0.005 → 0.007. signed 안정성 × v23-A 신호 강도.
+    # 가설: signed면 좌우 흔들기 페널티 작동 → weight ↑해도 진동 안 일어남.
+    # 다른 변수 v22/v24-A 그대로. --start-stage 6으로 s3d만 fine-tune.
+    tb_dir = sim_dir / "tb_logs" / "model3_v25"
     tb_dir.mkdir(parents=True, exist_ok=True)
 
     # Viewer thread 단 한 번만 — 첫 stage env로 시작, 모든 stage 통과

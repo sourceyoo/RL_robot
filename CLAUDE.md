@@ -33,10 +33,10 @@ python3 curriculum.py --no-viewer 2>&1 | tee curriculum.log
 | s1_forward (30k 조기 종료) | ~100초 |
 | s3a~c stage 1개 (200~350k) | 11~19분 |
 | s3d 500k | ~28분 |
-| **s3d 1M (v22)** | **~55분** |
+| **s3d 1M (v22/v23)** | **~55분** |
 | 전체 curriculum (s1~s3d, 종합) | 2~3시간 |
 
-학습이 빠른 이유 (v22 측정):
+학습이 빠른 이유 (v23 측정):
 - **환경 step 0.064 ms/step (15.6k fps)** — qpos 5·action 1·MuJoCo planar 3DOF + ellipsoid fluid라 매우 가벼움. 전체 시간의 1.4%.
 - **SAC update + Python overhead 98%** — [256,256] MLP는 RTX 3090에서 under-utilize, GPU/CPU/CUDA launch overhead가 bottleneck.
 - 1M step ≈ 1.8M SAC update (n_updates) → 시간 추정 시 step이 아닌 update 수 기준이 정확.
@@ -115,14 +115,16 @@ world ─[slide_x][slide_y][hinge_yaw]─ base_link (PLA 강체)
 
 목적: 정책이 *시간적 비대칭 ctrl 패턴* (D2 패턴 — 75% 한쪽 stroke + 25% 반대 stroke 등) 발견. `yaw_test.py`로 비대칭이 yaw 회전의 핵심임 확인 (대칭 sine 0.49°/s vs D2 패턴 4.6°/s).
 
-### 보상 함수 (현재 코드, v22 best)
+### 보상 함수 (현재 코드, v24-A)
 
 ```python
-reward = progress·10 + (10 if reached else 0) - ctrl_cost + ALIGN_W·align + YAW_W·|yaw_rate|
+reward = progress·10 + (10 if reached else 0) - ctrl_cost + ALIGN_W·align + YAW_W·yaw_rate·sign(yaw_dir)
 # ALIGN_W = 0.02 (10s ep) / 0.012 (30s ep) — v14
-# YAW_W = 0.005 — v21 도입, v22 best (s3d 32% / peak 50%)
-# v22 = v21 + s3d 1M fine-tune. 회전 시도 자체에 보상 → 정책의 "정렬만, 추진 안 함"
-#       mode 깨고 회전·추진 시퀀스 학습 강제. v18(no yaw, 1M reject) ≠ v22(yaw+1M 성공).
+# YAW_W = 0.005 — v22 best 균형값
+# v24-A signed yaw: |yaw_rate|·sign(d(align)/d(yaw)) — 옳은 방향 +, 틀린 −
+#   d(align)/d(yaw) = head_perp · target_dir, head_perp = (sin(yaw), cos(yaw))
+# v23-A 700k actor_loss spike 진단(좌우 흔들기) 직접 대응. **진동 해결 ✓
+# but 천장 돌파 못 함** (end 28%, v22 32% −4%p). final_dist 0.599m 모든 v best.
 ```
 
 - **progress**: delta dist × 10. align ∈ [-1, +1] (cos(머리, 목표)).
@@ -159,9 +161,9 @@ python3 train.py --tag s1_forward --theta-min 3.14159 --theta-max 3.14159 \
 
 ---
 
-## 학습 결과 — v1 ~ v22
+## 학습 결과 — v1 ~ v25
 
-GitHub Release: [`models-v1`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v1), [`models-v2`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v2), [`models-v5`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v5) (실패), [`models-v10`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v10), [`models-v12`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v12), [`models-v13`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v13), [`models-v17`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v17) (N=24, 정점 30% 천장 일시 돌파), [`models-v21`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v21) (yaw reward 천장 단독 돌파, s3d 29%/peak 38%) ⭐, [`models-v22`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v22) (**v21 + 1M fine-tune, s3d 32%/peak 50%, 천장 +6%p**) ⭐⭐. **v11 binary 영구 손실** (v12 학습이 덮어씀). v16·v19·v20은 `/tmp/models-v{16,19,20}-backup/` 로컬 백업. v18은 v17 s3d만 fine-tune (1M step) — `sim/runs/s3d_arc90/`이 덮어써진 상태, 별도 백업 없음. v3·v4·v6~v9·v11·v14~v16·v18~v20 release 없음.
+GitHub Release: [`models-v1`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v1), [`models-v2`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v2), [`models-v5`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v5) (실패), [`models-v10`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v10), [`models-v12`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v12), [`models-v13`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v13), [`models-v17`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v17) (N=24, 정점 30% 천장 일시 돌파), [`models-v21`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v21) (yaw reward 천장 단독 돌파, s3d 29%/peak 38%) ⭐, [`models-v22`](https://github.com/sourceyoo/RL_robot/releases/tag/models-v22) (**v21 + 1M fine-tune, s3d 32%/peak 50%, 천장 +6%p**) ⭐⭐. **v11 binary 영구 손실** (v12 학습이 덮어씀). v16·v19·v20은 `/tmp/models-v{16,19,20}-backup/`, v23·v24·v25는 `/tmp/models-v{23,24,25}/` 로컬 백업 (v25는 `/tmp/runs-models-v25.tar.gz`도). v18은 v17 s3d만 fine-tune (1M step) — `sim/runs/s3d_arc90/`이 덮어써진 상태, 별도 백업 없음. v3·v4·v6~v9·v11·v14~v16·v18~v20·v23~v25 release 없음.
 
 ### 결별 그룹화
 
@@ -182,29 +184,32 @@ GitHub Release: [`models-v1`](https://github.com/sourceyoo/RL_robot/releases/tag
 | **M. v19 + ent_floor ↑** | **v20** | s3c·d ent_floor 0.005·0.006 → **0.008·0.010**. **mode collapse 완전 해결 ✓** (align s3d −0.37 → **+0.84 모든 버전 best** ⭐). but reach 후퇴 (s3a 63%, s3d 19%) — v10 "정렬 best, 추진 worst" 재현 (final_dist 0.78m, 시작 0.5m보다 멀어짐) | **19%** |
 | **N. yaw reward** ⭐⭐ | **v21** | `+ YAW_W·\|yaw_rate\|` (YAW_W=0.005) 추가. v20 "정렬만, 추진 안 함" mode 직접 대응. **v11 26% 천장 단독 돌파**. 모든 stage 동시 회복 (s3a 90% 159k 조기·s3b 69% best·s3c 38%·s3d 29%/정점 38%). ep 21.8s (모든 v best). final_dist 0.78→0.67m (추진 회복) | **29%** ⭐⭐ |
 | **O. v21 + 학습량 ↑** ⭐⭐ | **v22** | s3d max_steps 500k → 1M (v21 s3c model에서 fine-tune). **천장 +6%p 추가 돌파**. v18(N=24+1M)은 reject였는데 **yaw reward 있으면 학습량 ↑가 효과**. peak 50% (6.4k init), end 32%, align +0.73 (v21 +0.51 회복), ep 21.2s (모든 v best). 마지막 10% 26~30% 안정 진동. | **32%** ⭐⭐⭐ |
+| **P. yaw reward 강화** ❌ | **v23-A** | YAW_W 0.005 → **0.007** (1.4배). v22 카드(N=20·ent_floor 차등·1M·s3c init) 그대로. **정점 41% (window 100, 모든 v best)** 625k~650k 도달하나 700k actor_loss −2.5 + ent_coef 0.018 spike instability event → 정책 진동 → **end 23%로 catastrophic 후퇴**. final_dist 0.764m (v20 패턴 부분 재현). **trade-off: 정점 +3%p / 평균 −9%p — reject**. | **23%** ❌ (peak 41%) |
+| **Q. signed yaw (방향 가산)** ◯ | **v24-A** | `+YAW_W·yaw_rate·sign(d(align)/d(yaw))`. 옳은 방향 +, 틀린 −. v23-A 진동 진단(\|yaw_rate\| 좌우 흔들기) 직접 대응. **진동 해결 ✓** (700k actor_loss spike 사라짐, 마지막 10% 26~28% 안정). final_dist **0.599m 모든 v best ⭐** (옳은 방향 추진 시퀀스 학습). but **천장 돌파 못 함** (end 28%, peak 35% — v22 32%/peak ~38% 미달). avg_align +0.615 (v22 +0.73 −0.115) — signed reward가 회전 강도 ↓ → mode 전환 catalysis 약함. **v22 \|yaw_rate\|의 "노이즈 보상"이 사실 학습 dynamic에 도움이 됐다는 역설 입증**. | **28%** ◯ (peak 35%) |
+| **R. signed yaw + 강한 weight** ❌ | **v25-A** | v24-A signed × v23-A YAW_W 0.005 → **0.007** 결합. 가설: signed면 좌우 흔들기 페널티 작동 → weight ↑해도 진동 안 일어남. ✅ **spike 없음 진단 부분 입증** (actor_loss V자×3, v23-A −2.5 폭락 없음). but ❌ **W자 점진 후퇴**: peak **33% (520~535k)** 도달 후 catastrophic drift — 685k 18%, 970k **12% (모든 v 후반 최저)**, end **16%**. avg_align +0.558, final_dist 0.775m, ep 25.5s (모든 v worst). v23-A는 700k 폭락이라면 v25-A는 470k 동안 점진 붕괴. **결론**: signed × 강한 weight는 spike는 막아도 학습 dynamic 자체를 천천히 망침. **v22 0.005가 sweet spot 재확인**. | **16%** ❌ (peak 33%) |
 
 ### 버전별 변경점 (주요만)
 
-| 변경 | v1 | v4 | v6 | v7 | v8~v10 | v11 | v12 | v13 | v14 | v15 | v16 | v17 | v19 | v20 | v21 | **v22** |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| align reward | 없음 | +0.02 가산 | (v4) | (v4) | (v4) | (v4) | (v11) | **0.02·10/ep_sec** | **0.012 fix** | (v14) | (v14) | (v14) | (v14) | (v14) | (v14) | (v14) |
-| reach bonus | 5 | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | **10** | (v15) | (v15) | (v15) | (v15) | (v15) | (v15) |
-| **yaw reward** | 없음 | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | **+\|yaw_rate\|·0.005** | (v21) |
-| Stage 3 분할 | 단일 ±90° | **s3a/b/c/d** | (v4) | (v4) | (v4) | (v4) | (v4) | (v4) | (v4) | (v4) | (v4) | (v4) | (v4) | (v4) | (v4) | (v4) |
-| s3 ep 길이 | 10s | 10s | **30s 통일** | (v6) | (v6) | (v6) | (v6) | (v6) | (v6) | (v6) | (v6) | (v6) | (v6) | (v6) | (v6) | (v6) |
-| action history | 0 | **8 (19D)** | (v4) | (v4) | (v4) | **16 (27D)** | (v11) | (v11) | (v11) | (v11) | (v11) | **24 (35D)** | **20 (31D)** | (v19) | (v19) | (v19) |
-| EntCoefFloor | 없음 | 없음 | 없음 | 균등 0.02 | v8 0.005 / v9 0.002 / v10 차등 | (v10) | (v10) | (v10) | (v10) | (v10) | (v10) | (v10) | (v10) | **s3c 0.008 / s3d 0.010** | (v20) | (v20) |
-| s3d max_steps | 500k | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | **1M** |
-| net_arch | [256,256] | (v1) | (v1) | (v1) | (v1) | (v1) | **[256,256,128]** | (v12) | (v12) | (v12) | **[256,256] 회귀** | (v16) | (v16) | (v16) | (v16) | (v16) |
+| 변경 | v1 | v4 | v6 | v7 | v8~v10 | v11 | v12 | v13 | v14 | v15 | v16 | v17 | v19 | v20 | v21 | v22 | v23-A | v24-A | **v25-A** |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| align reward | 없음 | +0.02 가산 | (v4) | (v4) | (v4) | (v4) | (v11) | **0.02·10/ep_sec** | **0.012 fix** | (v14) | (v14) | (v14) | (v14) | (v14) | (v14) | (v14) | (v14) | (v14) | (v14) |
+| reach bonus | 5 | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | **10** | (v15) | (v15) | (v15) | (v15) | (v15) | (v15) | (v15) | (v15) | (v15) |
+| **yaw reward** | 없음 | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | **+\|yaw_rate\|·0.005** | (v21) | **·0.007** ❌ | **+yaw_rate·sign·0.005** ◯ | **·sign·0.007** ❌ |
+| Stage 3 분할 | 단일 ±90° | **s3a/b/c/d** | (v4) | (v4) | (v4) | (v4) | (v4) | (v4) | (v4) | (v4) | (v4) | (v4) | (v4) | (v4) | (v4) | (v4) | (v4) | (v4) | (v4) |
+| s3 ep 길이 | 10s | 10s | **30s 통일** | (v6) | (v6) | (v6) | (v6) | (v6) | (v6) | (v6) | (v6) | (v6) | (v6) | (v6) | (v6) | (v6) | (v6) | (v6) | (v6) |
+| action history | 0 | **8 (19D)** | (v4) | (v4) | (v4) | **16 (27D)** | (v11) | (v11) | (v11) | (v11) | (v11) | **24 (35D)** | **20 (31D)** | (v19) | (v19) | (v19) | (v19) | (v19) | (v19) |
+| EntCoefFloor | 없음 | 없음 | 없음 | 균등 0.02 | v8 0.005 / v9 0.002 / v10 차등 | (v10) | (v10) | (v10) | (v10) | (v10) | (v10) | (v10) | (v10) | **s3c 0.008 / s3d 0.010** | (v20) | (v20) | (v20) | (v20) | (v20) |
+| s3d max_steps | 500k | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | (v1) | **1M** | (v22) | (v22) | (v22) |
+| net_arch | [256,256] | (v1) | (v1) | (v1) | (v1) | (v1) | **[256,256,128]** | (v12) | (v12) | (v12) | **[256,256] 회귀** | (v16) | (v16) | (v16) | (v16) | (v16) | (v16) | (v16) | (v16) |
 
 ### Stage 진행 비교
 
-| Stage | v8 | v10 | v11 | v12 | v15 | v16 | v17 | v19 | v20 | v21 | **v22** |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| s3a_arc15 (±15°) | 74% | 89% (89k 조기) | 67% | 84% | 69% | 80% | 66% | 96% (분산) | 63% | **90% (159k 조기)** ⭐ | (s3a~c는 v21) |
-| s3b_arc30 (±30°) | 70% | 72% | 44% | 67% | 62% | 70% | 62% | 61% | 53% | **69%** ⭐ | — |
-| s3c_arc60 (±60°) | **46%** ⭐ | 28% | 38% | 31% | 27% | 21% | 33% | 28% | 21% | **38%** | — |
-| s3d_arc90 (±90°) | 17% | 13% | 26% | 6% ❌ | 21% | 19% | 25% | 23% | 19% | 29% | **32%** ⭐⭐⭐ |
+| Stage | v8 | v10 | v11 | v12 | v15 | v16 | v17 | v19 | v20 | v21 | v22 | v23-A | v24-A | **v25-A** |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| s3a_arc15 (±15°) | 74% | 89% (89k 조기) | 67% | 84% | 69% | 80% | 66% | 96% (분산) | 63% | **90% (159k 조기)** ⭐ | (s3a~c는 v21) | — | — | — |
+| s3b_arc30 (±30°) | 70% | 72% | 44% | 67% | 62% | 70% | 62% | 61% | 53% | **69%** ⭐ | — | — | — | — |
+| s3c_arc60 (±60°) | **46%** ⭐ | 28% | 38% | 31% | 27% | 21% | 33% | 28% | 21% | **38%** | — | — | — | — |
+| s3d_arc90 (±90°) | 17% | 13% | 26% | 6% ❌ | 21% | 19% | 25% | 23% | 19% | 29% | **32%** ⭐⭐⭐ | 23% ❌ (peak 41%) | 28% ◯ (peak 35%) | **16%** ❌ (peak 33%) |
 
 ### s3d (±90°) 결과 — 마지막 100 ep 윈도우
 
@@ -226,6 +231,9 @@ GitHub Release: [`models-v1`](https://github.com/sourceyoo/RL_robot/releases/tag
 | **v20** | **19%** | **+0.84** ⭐ | 0.78m | **v19 + ent_floor s3c·d 강화 (0.005·0.006 → 0.008·0.010). mode collapse 완전 해결 ✓** (align −0.37 → +0.84, 모든 버전 best). but reach 후퇴 (s3a 96→63%, s3d 23→19%) — v10 패턴(정렬 best, 추진 worst) 더 심하게 재현. final_dist 0.78m (시작 0.5m보다 멀어짐). entropy ↑가 정렬에만 활용되고 추진 학습 못 함. |
 | **v21** ⭐⭐ | **29%** ⭐ | +0.51 | **0.67m** | **v20 + yaw reward (`+YAW_W·\|yaw_rate\|`, YAW_W=0.005). v11 26% 천장 단독 돌파**. 정점 38% (모든 버전 best, v17 30% 능가). align s3d 단조 우상향(−0.13→+0.58→+0.51 end). final_dist 0.78→0.67m (추진 회복). ep 21.8s (모든 v best). 모든 stage 동시 회복 (s3a 90% 159k 조기·s3b 69% best·s3c 38%). |
 | **v22** ⭐⭐⭐ | **32%** ⭐⭐ | **+0.73** | **0.64m** | **v21 s3d 1M fine-tune. 천장 +6%p 추가 돌파 (v11 26% 대비)**. peak **50%** (6.4k init, 모든 v best, v21 38% 능가). 마지막 10% 26~30% 안정 진동. ep 21.2s (모든 v best). **v18(N=24+1M) reject ≠ v22(yaw+1M) 성공** — yaw reward가 학습량 ↑의 lock 해제. 학습 곡선: 25→18→13(저점)→16→17→**저점 후 우상향 → 30~32 (end)**. |
+| **v23-A** ❌ | **23%** | +0.713 | 0.764m | **v22 + YAW_W 0.005 → 0.007 (1.4배)**. v22 카드 그대로(N=20·ent_floor 차등·1M·s3c init). **정점 41% (window 100, 모든 v best)** 625k~650k 도달. 그러나 700k에서 actor_loss 0.7 → **−2.5 폭락** + ent_coef 0.010 → **0.018 spike** (instability event) → reach 41→34% → **940k부터 21~23% 마지막 후퇴** → end 23% (v22 32% 대비 **−9%p**). final_dist 0.764m (v20 패턴 부분 재현). 학습 곡선 V자×3: 17→13(저점)→33→27→23(저점)→**41(정점)**→34→24(저점)→31→**23(end)**. **trade-off: 정점 +3%p / 평균 −9%p — reject**. v22 best 카드(YAW_W=0.005) 회귀 권장. |
+| **v24-A** ◯ | **28%** | +0.615 | **0.599m** ⭐ | **v22 + signed yaw**: `+YAW_W·yaw_rate·sign(d(align)/d(yaw))` (옳은 방향 +, 틀린 −). YAW_W=0.005 그대로, 다른 카드 v22 그대로. **v23-A 진동 진단(\|·\| 좌우 흔들기) 직접 검증**: ✓ **actor_loss spike 사라짐** (700k 부근 안정), ✓ **마지막 10% 26~28% 안정** (v23-A 21~23% 후퇴 회복), ✓ **final_dist 0.599m 모든 v best** (옳은 방향 추진 시퀀스 학습 ⭐). but **천장 돌파 못 함** (end 28%, peak 35% — v22 32%/peak ~38% 미달, −4%p). avg_align +0.615 (v22 +0.73 −0.115). 학습 곡선 V자×2: 17→24→18(저점)→**35(정점 405k)**→22(저점 575k)→16(저점 675k)→28(end). **역설**: v22 \|yaw_rate\|의 "좌우 모두 보상" 노이즈가 사실 회전 빈도 ↑ → mode 전환 catalysis ↑ → 천장 돌파 유리. signed로 진동은 막았으나 학습 dynamic 보수화. |
+| **v25-A** ❌ | **16%** | +0.558 | 0.775m | **v24-A signed × v23-A YAW_W 0.007 결합**. 다른 카드 v22 그대로 (N=20·ent_floor 차등·1M·s3c init). 가설: signed면 좌우 흔들기 페널티 작동 → weight ↑해도 진동 안 일어남. ✅ **spike 없음 (진단 부분 입증)** — actor_loss V자×3 있으나 v23-A −2.5 폭락 없음. ❌ **W자 점진 후퇴**: 23→25.6(90k 초기 peak)→13(225k 저점#1)→17→21(310k)→30(490k)→**33% (520~535k peak)** ⭐→28(580k)→20(690k 저점#2)→27(755~820k 회복)→18(890k)→**12% (970k 모든 v 후반 최저 ❌)**→16(end). avg_align +0.558 (v24-A +0.615 −0.057, v22 +0.73 −0.17), ep 25.5s (v22 21.2 +4.3s, 모든 v worst). **v23-A 700k 폭락이 470k 동안 점진 붕괴로 변형**. signed × 강한 weight: spike는 막아도 dynamic 천천히 망침. **v22 0.005가 sweet spot 재확인**. |
 
 ---
 
@@ -316,7 +324,41 @@ s3b/c init 음수 align (-0.98, -0.40)에서 학습할수록 양수로 회복 �
 - v22 (N=20, yaw, 1M): 25→18→13(저점)→16→21→**30→32 (저점 후 우상향, end 32%)** ⭐⭐
 - → **yaw reward 있으면 학습량 ↑가 정점→평균 안정화에 효과**. yaw reward가 mode 전환 catalysis로 작동, 학습량이 본격 활용.
 
-→ **누적 천장 진전**: v11 26% → v17 정점 30% → v21 29% (단독 돌파) → **v22 32% (peak 50%)**. 다음은 yaw reward 가중치 튜닝(v22-B: YAW_W 0.007 등) 또는 N=24+yaw reward 조합(v22-C), signed yaw 변형 등.
+→ **누적 천장 진전**: v11 26% → v17 정점 30% → v21 29% (단독 돌파) → **v22 32% (peak 50%)**. 다음은 yaw reward 가중치 튜닝(v22-B) 또는 N=24+yaw reward 조합(v22-C).
+
+**v23-A (yaw reward 강화 — 정점 ↑ but 평균 ❌)**: YAW_W 0.005 → **0.007** (1.4배). v22 best 카드(N=20·ent_floor 차등·1M·s3c init) 그대로. 가설: 회전 신호 강화로 v22 peak 50% 평균값 추가 향상.
+
+- ⭐ **정점 41% (window 100, 모든 v best)**: 625k~650k 약 25k step 동안 38~41% 유지. v22 peak 50%은 6.4k init 시점 평균이라 실제 안정 정점은 v22도 ~38% 가능성 — **v23-A가 안정 정점에선 +3%p**.
+- ❌ **end 23% (v22 32% 대비 −9%p)**: 700k 부근 instability event (actor_loss 0.7→−2.5, ent_coef 0.010→0.018 spike) 후 reach 41→34→27→23으로 단조 후퇴.
+- ❌ **마지막 10% 21~23% 후퇴** (v22 26~30% 안정 패턴과 정반대) — 940k부터 평균 catastrophic.
+- final_dist 0.764m (v22 0.64 대비 +0.12m, v20 0.78 가까움) — 추진 양보, **v20 "정렬만, 추진 안 함" mode 부분 재현**.
+- ep 23.8s (v22 21.2 대비 +2.6s) — 효율 후퇴.
+
+→ **YAW_W 1.4배 trade-off: 정점 +3%p / 평균 −9%p / 진동 ↑**. 이론적으로 YAW_W 강화는 회전 신호 dominance를 만들고 그게 정책 진동 trigger — v5/v7 곱셈 보상 mode collapse와 다른 mechanism이지만 비슷한 결과. **v22 best 카드(YAW_W=0.005)가 균형점**. 다음은 signed yaw (`yaw_rate × sign(yaw_error)`) 또는 N=24+yaw 0.005 조합.
+
+**v24-A (signed yaw — 진동 해결 ✓ but 천장 돌파 못 함 ◯)**: `+YAW_W·yaw_rate·sign(d(align)/d(yaw))` (옳은 방향 +, 틀린 −). YAW_W=0.005, 다른 카드 v22 그대로. v23-A 진동 진단(`|yaw_rate|`가 좌우 모두 보상 → 흔들기 trigger) 직접 검증.
+
+- ✅ **진동 해결**: 700k actor_loss spike (v23-A: −2.5) **사라짐** ⭐. ent_coef 0.018 spike도 없음 (시작 직후 0.017→0.010 floor 빠른 수렴 후 평탄).
+- ✅ **마지막 10% 안정**: 26~28% (v22 26~30% 동급, v23-A 21~23% 후퇴 회복).
+- ✅ **final_dist 0.599m — 모든 v best ⭐**: v22 0.64m, v23-A 0.764m, v20 0.78m 능가. signed reward가 옳은 방향 회전·추진 시퀀스 명시적으로 학습.
+- ✅ **학습 곡선 단조 우상향**: ep_rew_mean −19→+3 (저점 후 회복), actor_loss 2.1→0.8 단조 감소, V자 있으나 spike 없음.
+- ❌ **천장 돌파 못 함**: end 28% (v22 32% −4%p), peak 35% at 405k (v23-A peak 41% −6%p).
+- ❌ **avg_align +0.615** (v22 +0.73 대비 −0.115) — signed reward가 회전 시도 자체를 보수화 → 정렬 학습 약화.
+
+→ **역설 — `|yaw_rate|`의 "좌우 모두 보상"이 사실 학습 dynamic에 도움**: v22의 좌우 무차별 보상은 회전 빈도를 ↑ → mode 전환 catalysis(정렬↔추진) 강화 → 천장 돌파. signed yaw는 회전을 "옳은 방향만"으로 제한 → 진동은 막았으나 학습 dynamic 보수화 → 천장 미돌파. 즉 v22 \|·\|0.005가 안정성·천장 돌파의 sweet spot, v23-A 0.007은 신호 너무 강해 진동, v24-A signed는 신호 너무 보수적이라 dynamic 부족. **천장 돌파 = 회전 신호 양 + 진동 회피 모두 필요**.
+
+**v25-A (signed yaw + YAW_W 0.007 — spike 진단 부분 입증 but 천장 catastrophic ❌)**: v24-A signed × v23-A YAW_W 0.007 결합. 가설(signed면 weight ↑해도 진동 없음)을 직접 검증.
+
+- ✅ **spike 없음 (진단 부분 입증)**: actor_loss V자×3 변동 있으나 v23-A의 −2.5 폭락 없음. signed가 좌우 흔들기 페널티 작동하는 것 일부 확인.
+- ⭐ **peak 33% (520~535k)**: v22 안정 정점(~38%)·v23-A 41% 미달이지만 v24-A 35%와 동급.
+- ❌ **W자 점진 후퇴 — 모든 v 중 worst end**: 학습 곡선 23(60k init)→25.6(90k 초기 peak)→13(225k 저점#1)→17→21(310k)→30(490k)→**33(520~535k peak)** ⭐→28(580k)→20(690k 저점#2)→27(755~820k 회복)→18(890k)→**12 (970k 모든 v 후반 최저)** ❌→16(end). 530k peak 후 470k 동안 −21%p 점진 catastrophic.
+- ❌ **avg_align +0.558**: v22 +0.73 −0.17, v24-A +0.615 −0.057. signed weight ↑가 정렬도 후퇴.
+- ❌ **final_dist 0.775m**: v22 0.64 +0.135, v24-A 0.599 +0.176, v20 0.78 근접 — 추진 학습 후퇴 ("정렬만 mode" 잔재).
+- ❌ **ep 25.5s**: 모든 v worst (v22 21.2 +4.3s, v24-A 미보고 but v22보다 길었음). 도달 효율 후퇴.
+
+→ **결론**: v23-A 700k 즉시 폭락이 v25-A에서는 470k 동안 점진 붕괴로 변형. signed × 강한 weight는 **spike는 막아도 학습 dynamic 자체를 천천히 망침**. 가설(signed의 안정성 × 강한 신호 결합) 부분 입증(spike 없음) but 천장 돌파 실패(weight 0.007이 signed의 보수성 깨뜨려 mode drift trigger). **v22 \|·\|0.005가 sweet spot 재확인** — yaw reward의 두 축(신호 형태·강도)에서 모두 v22 기본값이 최적.
+
+다음 후보: **v22 reproduce (재현성 검증)** 또는 **N=24 + signed yaw 0.005** (v17 표현력 + v24-A 안정성, s1부터 새 학습 필요), 또는 **soft signed (`tanh(·)` 부드러운 부호)**. 또는 카드 축 자체 변경 (HER / fin actuator 추가).
 
 ### 핵심 통찰 — `yaw_test.py`의 결정적 발견
 
@@ -342,12 +384,15 @@ s3b/c init 음수 align (-0.98, -0.40)에서 학습할수록 양수로 회복 �
 - ❗ **v20 ent_floor 강화 — collapse 해결 ✓ but reach 후퇴 ❌** — s3c·d floor 0.008/0.010으로 v19 collapse 완전 해결 (align +0.84 모든 버전 best). but reach 후퇴, final_dist 0.78m로 멀어짐. **entropy 양 ↑이 정책 mode 깨지만 추진 학습엔 못 쓰임** — v10 패턴 재현. ent_floor 카드 한계.
 - ⭐⭐ **v21 yaw reward — v11 26% 천장 단독 돌파** — `+YAW_W·|yaw_rate|` (0.005) 추가. s3d end 29% (+3%p), **정점 38% (모든 v best)**, ep 21.8s (모든 v best). 모든 stage 동시 회복 (s3a 90%·s3b 69% best·s3c 38%·s3d 29%). 진단 정확: 회전 시도 자체에 보상 → 정책이 "정렬만 mode" 탈출, 회전·추진 시퀀스 학습. **천장 돌파의 본질 = yaw 변화 보상**.
 - ⭐⭐⭐ **v22 v21 s3d 1M fine-tune — 천장 +6%p 추가 돌파** — end 32% (v11 26% +6%p), **peak 50%** (모든 v best). 마지막 10% 26~30% 안정. **v18(N=24+1M reject) ≠ v22(yaw+1M 성공)** — yaw reward가 학습량 ↑의 lock 해제. yaw reward = mode 전환 catalysis, 학습량 ↑가 본격 활용 가능.
+- ❌ **v23-A YAW_W 0.005 → 0.007 (1.4배) — 정점 ↑ but 평균 ❌** — 정점 41% (window 100 모든 v best) 625k~650k 도달. but 700k actor_loss −2.5 폭락 + ent_coef 0.018 spike (instability event) → end 23% (v22 32% 대비 -9%p). 마지막 10% 21~23% 후퇴 (v22 26~30% 안정과 정반대). final_dist 0.764m (v20 패턴 부분 재현). **YAW_W 강화는 정점 +3%p / 평균 -9%p / 진동 ↑ trade-off — 회전 신호 dominance가 정책 진동 trigger. v22 0.005가 균형점**.
+- ◯ **v24-A signed yaw — 진동 해결 ✓ but 천장 돌파 못 함** — `yaw_rate·sign(d(align)/d(yaw))`. ✓ actor_loss spike 사라짐, ✓ 마지막 10% 26~28% 안정, ✓ **final_dist 0.599m 모든 v best** (옳은 방향 추진 시퀀스 학습). but end 28% / peak 35% (v22 32% −4%p, v23-A peak 41% −6%p). avg_align +0.615 (−0.115). **역설**: v22 \|yaw_rate\|의 좌우 무차별 보상이 회전 빈도 ↑ → mode 전환 catalysis 강화 → 천장 돌파 유리. signed로 신호 보수화 → 진동 ↓ but 학습 dynamic ↓. **천장 돌파 = 회전 신호 양 + 진동 회피 동시 필요**.
+- ❌ **v25-A signed yaw + YAW_W 0.007 (v24-A × v23-A 결합) — spike 없음 but 천장 catastrophic** — 가설(signed면 weight ↑해도 진동 없음) 부분 입증: ✓ actor_loss V자×3 있으나 v23-A −2.5 폭락 없음. but ❌ **W자 점진 후퇴 — 모든 v 중 worst end**: peak 33% (520~535k) 후 catastrophic drift → 970k 12% (모든 v 후반 최저) → end **16%** (v22 32% **−16%p**). avg_align +0.558, final_dist 0.775m, ep 25.5s (모든 v worst). **v23-A 700k 즉시 폭락이 v25-A에서는 470k 동안 점진 붕괴로 변형** — signed × 강한 weight는 spike는 막아도 학습 dynamic 천천히 망침. **v22 \|·\|0.005가 sweet spot 재확인**: yaw reward의 두 축(신호 형태·강도)에서 모두 v22 기본값이 최적, 단순 weight 카드 종결.
 
 ---
 
 ## TensorBoard 메트릭 가이드
 
-`tb_logs/` 구조는 **버전 폴더로 분리** (`model3_v1/` ~ `model3_v22/`).
+`tb_logs/` 구조는 **버전 폴더로 분리** (`model3_v1/` ~ `model3_v25/`).
 
 ### SB3 기본
 
@@ -425,6 +470,9 @@ tensorboard --logdir tb_logs/ --bind_all
 16. **학습량 ↑ (v18, v17-B)**: v17 s3d만 500k → 1M fine-tune. **end 25% 동일** — 학습량 부족 가설 reject. 정점 30% 3회 도달(22.9k·312k·944k)하나 100ep window 안정화 실패. 정렬만 v11 동급 회복 (+0.43→+0.57), ep_rew 6.6→8.2 ↑. **단일 모터 + N=24 + 현 reward의 이론적 천장 ≈ 25~30%, 평균 25%**가 잠정 결론. 정책이 mode 전환(정렬↔추진) 못 하고 25% 부근 진동.
 17. **N=20 절충 (v19, v17-C)**: 24 → 20 (1.25 wag cycle). s3a 96% (170k 조기, but seed 분산 — v20 동일 setup에서 63%) + **s3c·d mode collapse** — avg_align s3a +0.58 → s3d **−0.37** 단조 반전, ep_rew −2.5 (음수). 정책이 "거꾸로 가면서 가까워지면 prog 양수" mode 학습 (final_dist 0.35m < 시작 0.5m). N=20이 작은 회전 narrow mode 강화 → 큰 회전 entropy floor로 못 깨짐 → align 음수 mode 학습. **N=20 단독 부적합** — 큰 회전 안정성 희생.
 18. **ent_floor 강화 (v20)**: s3c·d floor 0.005·0.006 → **0.008·0.010**. v19 mode collapse **완전 해결 ✓** (align s3d −0.37 → **+0.84 모든 버전 best**). but reach 후퇴 (s3a 63%, s3d 19%) + final_dist 0.78m (시작 0.5m보다 멀어짐). v10 "정렬 best, 추진 worst" 패턴 더 심하게 재현. **entropy 양 ↑이 정책 mode 깨지만 추진 학습엔 못 쓰임 — ent_floor 카드 한계 입증**. SAC actor가 entropy를 정렬에만 활용. 다음은 N·entropy·reward 단일 축 카드 종결, 근본 카드 (HER / Custom yaw reward) 또는 v11 회귀.
+19. **YAW_W 강화 (v23-A)**: v22 best 카드 + YAW_W 0.005 → **0.007** (1.4배). **정점 41% (window 100 모든 v best, 625k~650k)** but 700k actor_loss 0.7 → **−2.5 폭락** + ent_coef 0.010 → **0.018 spike** (instability event) → end 23% (v22 32% −9%p). 마지막 10% 21~23%로 catastrophic 후퇴 (v22 26~30% 안정과 정반대). final_dist 0.764m로 v20 패턴 부분 재현. **YAW_W 강화 trade-off: 정점 +3%p / 평균 −9%p / 진동 ↑** — 회전 신호 dominance가 정책 진동 trigger. v5/v7 곱셈 보상 mode collapse와 다른 mechanism (정점에 도달은 하지만 유지 못 함). **v22 YAW_W=0.005가 균형점**, weight 단순 ↑로는 천장 못 깸.
+20. **signed yaw 단독 (v24-A)**: v22 best 카드 + `+YAW_W·yaw_rate·sign(d(align)/d(yaw))` (옳은 방향 +, 틀린 −). YAW_W=0.005 그대로. v23-A 진동 진단 직접 검증. ✅ **진동 해결**: 700k actor_loss spike 사라짐, 마지막 10% 26~28% 안정, **final_dist 0.599m 모든 v best ⭐** (옳은 방향 추진 시퀀스 학습). ❌ **천장 돌파 못 함**: end 28% / peak 35% (v22 32% −4%p, v23-A peak 41% −6%p). avg_align +0.615 (v22 +0.73 −0.115). **역설**: v22 \|yaw_rate\|의 "좌우 모두 보상" 노이즈가 사실 회전 빈도 ↑ → mode 전환 catalysis 강화 → 천장 돌파 유리. signed로 신호 보수화 → 진동 ↓ but 학습 dynamic ↓. **천장 돌파 = 회전 신호 양 + 진동 회피 동시 필요** — signed 단독으론 부족, **signed + YAW_W ↑ 조합 필요**.
+21. **signed yaw + 강한 weight (v25-A)**: v22 best 카드 + signed yaw × YAW_W 0.005 → **0.007** (v24-A 안정성 × v23-A 신호 강도 결합). 가설: signed면 weight ↑해도 좌우 흔들기 페널티 작동 → 진동 안 일어남. ✅ **spike 없음 (가설 부분 입증)**: actor_loss V자×3 있으나 v23-A −2.5 폭락 없음. but ❌ **W자 점진 catastrophic — 모든 v 후반 최저**: peak 33% (520~535k, v24-A 35% 동급) 후 470k 동안 −21%p 점진 붕괴 → 970k **12%** → end **16%** (v22 32% −16%p, v24-A 28% −12%p). avg_align +0.558, final_dist 0.775m, ep 25.5s (모든 v worst). **v23-A 700k 즉시 폭락이 v25-A에서는 천천히 진행되는 형태로 변형** — signed × 강한 weight는 spike는 막아도 학습 dynamic 천천히 망침. **v22 \|·\|0.005가 sweet spot 재확인** — yaw reward 두 축(신호 형태·강도)에서 모두 기본값이 최적. **YAW_W 단순 ↑ 카드 완전 종결 (v23-A·v25-A 모두 reject)**, signed × 강한 weight도 reject.
 
 → 정착한 조합 = **MODE_3 + Ecoflex passive fin + 3DOF planar**.
 
@@ -436,6 +484,9 @@ tensorboard --logdir tb_logs/ --bind_all
 5. **action history N=24 (v17)** — 큰 회전 동시 회복 + 정점 30% 일시 돌파
 6. **yaw_rate 보상 (v21)** ⭐⭐ — **v11 26% 천장 단독 돌파** (29%, 정점 38%). 회전 시도 인센티브가 mode 전환 trigger. 모든 stage 동시 회복.
 7. **v21 s3d 1M fine-tune (v22)** ⭐⭐⭐ — **천장 +6%p 추가 돌파** (32%, peak 50%). yaw reward가 학습량 ↑의 lock 해제 — v18(no yaw, 1M)은 reject였으나 v22(yaw, 1M)는 성공.
+8. **v23-A YAW_W 1.4배 reject** ❌ — 정점은 41%로 ↑되나 700k actor_loss spike 후 end 23%로 후퇴. **YAW_W=0.005가 균형점** 입증, 단순 weight ↑ 카드 종결.
+9. **v24-A signed yaw — 진동 해결 ✓ but 천장 ◯** — `yaw_rate·sign(d(align)/d(yaw))`. v23-A 진동 진단 직접 검증, **actor_loss spike 사라짐 + 마지막 10% 26~28% 안정 + final_dist 0.599m 모든 v best**. but end 28% / peak 35% (v22 −4%p). **역설**: \|·\|의 좌우 무차별 보상이 회전 빈도 ↑로 mode catalysis 강했던 것. 천장 돌파 = 신호 양 + 진동 회피 동시 필요.
+10. **v25-A signed × 강한 weight reject** ❌ — signed × YAW_W 0.007 결합. spike는 막혔으나(가설 부분 입증) **W자 점진 catastrophic — end 16% (모든 v worst)**, 970k 12%로 후반 최저. 530k peak 33% 후 470k 동안 점진 붕괴. **v23-A 700k 즉시 폭락의 슬로 모션 버전**. signed × 강한 weight도 reject — **v22 \|·\|0.005가 sweet spot 재확인, YAW_W 단순 ↑ 카드 완전 종결**.
 
 ---
 
@@ -470,25 +521,28 @@ tar -xzf runs-models-vN.tar.gz -C sim/
 
 ## 다음 후보 (미해결)
 
-**v22까지 결론**: 9장(v12~v20) 미돌파 → **v21 yaw reward 천장 단독 돌파** (29%) → **v22 v21+1M으로 천장 +6%p 추가 돌파** (32%, peak 50%) ⭐⭐⭐. 핵심 통찰: yaw reward = 회전·추진 시퀀스 학습 catalysis. v18(no yaw, 1M reject) ≠ v22(yaw, 1M 성공) — yaw reward가 학습량 ↑의 lock 해제. 현재 best 카드 = N=20 + ent_floor 차등 + reward (align 0.012 + reach 10 + yaw `|·|`0.005) + s3d 1M (= v22).
+**v25까지 결론**: 9장(v12~v20) 미돌파 → **v21 yaw reward 천장 단독 돌파** (29%) → **v22 v21+1M으로 천장 +6%p 추가 돌파** (32%, peak 50%) ⭐⭐⭐ → **v23-A YAW_W 강화 reject** (정점 +3%p but 평균 -9%p, 700k 즉시 spike) → **v24-A signed yaw 진동 해결 ✓ but 천장 미돌파** (end 28%, peak 35%, final_dist best 0.599m) → **v25-A signed × YAW_W 0.007 reject** (spike 없음 but W자 점진 catastrophic, end 16% 모든 v worst). 핵심 통찰: **천장 돌파 = 회전 신호 양 + 진동 회피 동시 필요. yaw reward 두 축(신호 형태·강도)에서 v22 기본값(`|·|`·0.005)이 sweet spot**. YAW_W 단순 ↑ 카드 완전 종결 (`|·|`·0.007 즉시 spike / signed·0.007 점진 catastrophic 모두 reject). 현재 best 카드 = N=20 + ent_floor 차등 + reward (align 0.012 + reach 10 + yaw `|·|`0.005) + s3d 1M (= v22).
 
-1. **v22-B — YAW_W 튜닝** (0.003 / 0.007 / 0.010) — 회전 신호 강도 sweep. v22 peak 50% 추가 향상 가능성 vs 진동 trigger 위험.
-2. **v22-C — N=24 + yaw reward 0.005** — v17 큰 회전 표현력(정점 30%) + v22 mode catalysis. N 변경은 s1부터 새 학습 (함정 #9, 2~3시간).
-3. **signed yaw** — `yaw_rate × sign(d(align)/d(yaw))`. \|·\|보다 정렬과 일관된 방향만 보상.
-4. **v22 reproduce (재현성 검증)** — v22 32% / peak 50%이 단일 seed인지. 재현 안 되면 카드 자체보다 seed 운 영향 가능. baseline 신뢰도 확보용.
+1. **v22 reproduce (재현성 검증)** — v22 32% / peak 50%이 단일 seed인지. v23-A·v24-A·v25-A 모두 v22 reject → v22가 정말 baseline인지 재현성 확인 필요. **다음 권장 (현재 best 카드 신뢰도 확보)**.
+2. **v26 — soft signed yaw** — `sign` 대신 `tanh(d(align)/d(yaw) × scale)`로 부드러운 부호. v24-A signed 단절 + v22 `|·|` 노이즈의 중간. 0 부근 단절 제거, mode catalysis 일부 보존.
+3. **v26 — N=24 + signed yaw 0.005** — v17 큰 회전 표현력(정점 30% 일시) + v24-A 안정성. N 변경은 s1부터 새 학습 (함정 #9, 2~3시간).
+4. **v26 — v22 + s3d 2M fine-tune** — v22가 1M 안에서 peak 50% 후 점진 안정 32%. 학습량 2배로 추가 안정화 가능성 검토 (다만 v18 패턴 재현 위험).
 5. **HER (Hindsight Experience Replay)** — env Dict obs 큰 변경. 가장 강력하나 구현 비용 큼.
 6. **fin actuator 추가** — 단일 모터 한계 자체를 풂. (사용자 명시 제외)
 7. **ANN surrogate (Lighthill / Zhong 2026)** — fluid model 한계 우회. 실물 motion capture 필요.
 
 ### 단일 지느러미의 천장
 
-`yaw_test.py`로 **단일 모터+passive fin yaw rate 물리 상한 ~4.6°/s** 확인 (D2 패턴 × 20s = 92°, ±90° 도달은 가능하나 마진 작음). v1~v10 13~24% → v11 N=16으로 26% 첫 돌파 → v12~v15 reward 4종 + v16 NN 회귀 모두 미돌파 → v17 N=24 정점 30% 일시 → v18 1M 학습량도 reject → v19 N=20 s3c·d mode collapse → v20 ent_floor ↑로 collapse 해결 but reach 19% → **v21 yaw reward로 천장 단독 돌파 (29%)** ⭐⭐ → **v22 v21+1M으로 +6%p 추가 돌파 (32%, peak 50%)** ⭐⭐⭐.
+`yaw_test.py`로 **단일 모터+passive fin yaw rate 물리 상한 ~4.6°/s** 확인 (D2 패턴 × 20s = 92°, ±90° 도달은 가능하나 마진 작음). v1~v10 13~24% → v11 N=16으로 26% 첫 돌파 → v12~v15 reward 4종 + v16 NN 회귀 모두 미돌파 → v17 N=24 정점 30% 일시 → v18 1M 학습량도 reject → v19 N=20 s3c·d mode collapse → v20 ent_floor ↑로 collapse 해결 but reach 19% → **v21 yaw reward로 천장 단독 돌파 (29%)** ⭐⭐ → **v22 v21+1M으로 +6%p 추가 돌파 (32%, peak 50%)** ⭐⭐⭐ → **v23-A YAW_W 1.4배 reject** (정점 41% but 평균 23%, 700k 즉시 spike) → **v24-A signed yaw 진동 해결 but 천장 미돌파** (end 28%, peak 35%, final_dist 0.599m best) → **v25-A signed × YAW_W 0.007 reject ❌** (spike 없음 but W자 점진 catastrophic, end 16% 모든 v worst, 970k 12% 후반 최저).
 
-**카드 분류 매트릭스**:
+**카드 분류 매트릭스 (최종)**:
 - **N (시간적 표현력)** v11/v17/v19 — 정점 30% 가능
 - **entropy (mode 전환)** v8~v10/v20 — collapse 해결
 - **align/reach 가중치** v12~v15 — reward 비율 카드 한계
 - **yaw reward (회전·추진 시퀀스)** **v21~v22** — **천장 돌파 + 안정화 ⭐⭐⭐**
 - **학습량 ↑ × yaw reward** — yaw reward가 학습량 lock 해제 (v18 reject ≠ v22 성공)
+- **YAW_W 강화 (v23-A: \|·\|·0.007)** ❌ — 정점 +3%p / 평균 −9%p / 진동 ↑. 700k actor_loss 즉시 폭락.
+- **signed yaw 단독 (v24-A: signed·0.005)** ◯ — 진동 해결 ✓ but 천장 미돌파 (end 28%, v22 −4%p). final_dist 0.599m best. avg_align 0.615로 ↓ — 신호 보수화의 대가.
+- **signed × 강한 weight (v25-A: signed·0.007)** ❌ — spike는 막힘 (가설 부분 입증) but **W자 점진 catastrophic** — end 16% (모든 v worst), 970k 12% 후반 최저. v23-A 즉시 폭락의 슬로 모션 버전.
 
-→ **천장 돌파의 본질 = "회전 시도 자체에 보상"** (yaw reward). v22 \|yaw_rate\|·0.005가 sweet spot — 회전 빈도 ↑ → mode 전환(정렬↔추진) catalysis → 천장 돌파. 다음은 **YAW_W 튜닝 (v22-B)** 또는 **N=24 + yaw reward (v22-C)**, **signed yaw 변형**, 또는 **v22 reproduce** (재현성 검증).
+→ **천장 돌파의 본질 = "회전 신호 양" + "진동 회피" 동시 필요**. v22 \|·\|0.005가 sweet spot — yaw reward 두 축(신호 형태·강도)에서 v22 기본값이 최적. v23-A·v25-A 모두 weight ↑ 카드 reject, v24-A signed 단독은 보수적이라 천장 미돌파. **YAW_W 단순 변형 카드 완전 종결**. 다음은 **v22 reproduce (재현성 검증)** 또는 **soft signed (`tanh(·)`)** 또는 **N=24 + signed 0.005** (s1부터 새 학습).
