@@ -42,11 +42,13 @@ PI = math.pi
 
 # v4: action history obs 추가 (시간적 비대칭 ctrl 패턴 학습 enable).
 # yaw_test.py 진단으로 D2 패턴 등 비대칭이 yaw 회전 핵심임 확인.
-# v11: 8 → 16. v8/v9/v10 모두 ent_floor 카드로 천장 못 뚫음 — 진짜 병목 = 정책
-# 표현력. N=8은 1/2 wag cycle만 커버 (3Hz × 17 step/cycle / 2 ≈ 8).
-# N=16은 1 wag cycle 커버 → D2 패턴(75/25 비대칭 stroke) 표현 가능.
-# obs dim: 11 + 16 = 27.
-ACTION_HISTORY_N = 16
+# v11: 8 → 16. N=8은 1/2 wag cycle만 커버, N=16은 1 wag cycle (3Hz × 17 step/cycle).
+# v17-A: 16 → 24 (1.5 wag cycle). 큰 회전 회복 ✓ but 작은 회전 후퇴 (s3a 80→66%).
+# v18: max_steps 1M도 천장 못 깸 → N=24 카드 천장 25~30% 본질적 진동 입증.
+# v19-A: 24 → 20 (1.25 wag cycle 절충). N=16(v11 s3a 67%)·N=24(v17 s3a 66%) 사이.
+# 큰 회전 표현력 유지 + 작은 회전 후퇴 완화 시도.
+# obs dim: 11 + 20 = 31. (N 변경은 SAC.load 호환 X — 함정 #9. s1부터 새 학습.)
+ACTION_HISTORY_N = 20
 
 # v10: Stage별 차등 ent_floor.
 # v8 floor 0.005 / v9 floor 0.002 결과 종합 — 단일 floor로 전체 cover 불가 입증.
@@ -97,16 +99,22 @@ STAGES = [
         "success_radius": 0.08,
         "max_steps": 350_000,
         "episode_seconds": 30.0,
-        "ent_floor": 0.005,
+        # v20-A: 0.005 → 0.008. v19(N=20) s3c·d mode collapse (align −0.17/−0.37) 진단
+        # = s3a 96% narrow mode 잔재가 큰 회전 entropy floor로 못 깨짐. floor ↑로 강제 탐색.
+        "ent_floor": 0.008,
     },
     {
         "tag": "s3d_arc90",
         "desc": "Stage 3d — 좌우 ±90° (θ ∈ [π/2, 3π/2], 전체 head arc)",
         "theta_min": PI / 2, "theta_max": 3 * PI / 2,
         "success_radius": 0.08,
-        "max_steps": 500_000,
+        # v22-A: 500k → 1M. v21(yaw reward) 정점 38% (186k) 후 후반 29%로 후퇴.
+        # 학습량 ↑로 정점 평균값 안정화 시도. v18(N=24+학습량 ↑) 같은 카드는 안정화
+        # 실패였으나 v21은 다른 dynamics라 시도 가치.
+        "max_steps": 1_000_000,
         "episode_seconds": 30.0,
-        "ent_floor": 0.006,
+        # v20-A: 0.006 → 0.010. s3c와 동일 메커니즘 — narrow mode 깨기 위한 강제 entropy.
+        "ent_floor": 0.010,
     },
 ]
 
@@ -133,7 +141,8 @@ def main():
     plot_dir = sim_dir / "plots"
     # 모든 단계의 tensorboard log를 model3_vN 폴더 안에 묶어 TB UI에서 v별 비교 가능.
     # 새 학습 시작할 때마다 v숫자를 올려도 되고, 같은 v 안에서 stage 진행도 가능.
-    tb_dir = sim_dir / "tb_logs" / "model3_v11"
+    # v22: v21 yaw reward + s3d 1M fine-tune → s3d 32% / peak 50% (모든 v best 카드).
+    tb_dir = sim_dir / "tb_logs" / "model3_v22"
     tb_dir.mkdir(parents=True, exist_ok=True)
 
     # Viewer thread 단 한 번만 — 첫 stage env로 시작, 모든 stage 통과
@@ -186,6 +195,10 @@ def main():
                 model = SAC.load(str(prev_model_path), env=env, device=args.device)
                 model.tensorboard_log = str(tb_dir)
             else:
+                # v16-A: NN default [256,256] 회귀. v12에서 도입한 [256,256,128]이
+                # narrow mode 학습 가속하는 부작용 제거. v11이 default NN으로 26% 달성한 만큼
+                # NN 확장은 천장 돌파 카드가 아니었음. reward 카드(v12~v15) 종결 후 architecture
+                # 변수 정리. policy_kwargs 생략 = SB3 default [256, 256].
                 model = SAC(
                     "MlpPolicy", env, verbose=1, device=args.device,
                     tensorboard_log=str(tb_dir),

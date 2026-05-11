@@ -15,9 +15,15 @@ qvel layout (5): [vx, vy, vyaw, vtail, vfin]
 
 행동 (1차원): tail motor ctrl ∈ [-1, 1].
 
-보상 (v8): progress·10 + reached_bonus - ctrl_cost + 0.02·align (v4 가산식 복귀).
-  - 곱셈 보상은 v5(비대칭) / v7(대칭) 모두 mode collapse 유도 → 가산식으로 복귀.
-  - align ∈ [-1, +1] (cos(머리, 목표)). 가중치 0.02는 stay-still(N×0.02)이 reach(~10) 못 넘게.
+보상 (v14): progress·10 + reached_bonus - ctrl_cost + ALIGN_W·align.
+  - v8 가산식 + v14 ALIGN_W 직접 fix: 10s ep는 0.02 그대로, 30s ep는 0.012 직접 박음.
+    - s1·s2 (10s ep): 0.02 (align 누적 +5 ≈ reach +5, 1:1).
+    - s3a~d (30s ep): 0.012 — align 누적 ≈ 1500×0.012×0.6 = +11 vs reach +5 (2.2:1 비율).
+  - v12 catastrophic 진단: ep 30s에서 align 누적 +18 vs reach +5 = 3.6:1로 reach 신호 묻힘.
+  - v13 (`0.02·10/episode_seconds` 비례)는 30s에서 0.0067 → 비율 1.2:1로 catastrophic 해결했으나
+    정렬 신호 부족(align +0.19)으로 천장 미돌파. v12·v13 양 극단의 산술 중간 0.012가 적정값.
+  - 곱셈 보상(v5/v7)은 mode collapse — 가산식 + 비율 튜닝이 정착.
+  - align ∈ [-1, +1] (cos(머리, 목표)).
 """
 
 from __future__ import annotations
@@ -58,6 +64,10 @@ class FishSwimEnv(gym.Env):
         self.target_radius = target_radius
         self.success_radius = success_radius
         self.target_theta_range = target_theta_range  # curriculum용 목표 각도 범위
+        # v14: align_weight 직접 fix. 10s ep는 0.02, 30s ep는 0.012.
+        # v12 (0.020, 비율 3.6:1) → catastrophic / v13 (0.0067, 비율 1.2:1) → 정렬 부족.
+        # 산술 중간 0.012 (비율 2.2:1)로 reach 신호 살리면서 정렬 학습도 유지.
+        self.align_weight = 0.02 if episode_seconds <= 10.0 else 0.012
         self.action_history_n = max(0, int(action_history_n))
         self._action_history = np.zeros(self.action_history_n, dtype=np.float32)
         self.render_mode = render_mode
@@ -160,14 +170,20 @@ class FishSwimEnv(gym.Env):
         rel_norm = float(np.linalg.norm(rel))
         align = float(np.dot(head_dir, rel / rel_norm)) if rel_norm > 1e-6 else 0.0
 
-        # v8: v4 가산식 복귀. v5(비대칭 곱)는 머리 반대+후진 mode, v7(대칭 곱)은 도망 mode
-        # (final_distance 6m). 곱셈 카테고리 전체가 부적합 — 가산식 + ent floor로 회귀.
-        ALIGN_W = 0.02
+        # v15: reach 보너스 5 → 10. align_weight (10s 0.02 / 30s 0.012)는 v14 그대로.
+        # v14의 align dominance(7.4:1) 완화 위해 reach 절대값만 2배 강화.
+        # v21-A: yaw 변화 자체 보상 추가 (`+YAW_W·|yaw_rate|`). v20 진단(entropy ↑로도
+        # 추진 학습 못 함, "정렬만 mode") 직접 대응. 회전 시도 자체에 인센티브 → 정책의
+        # "정렬만, 추진 안 함" mode 깨고 회전·추진 시퀀스 학습 강제.
+        # v22: v21 + s3d 1M fine-tune → 천장 32% / peak 50%, 모든 v best 카드.
+        YAW_W = 0.005
+        yaw_rate = float(self.data.qvel[IDX_YAW])
         reward = (
             float(progress * 10.0)
-            + (5.0 if reached else 0.0)
+            + (10.0 if reached else 0.0)
             - ctrl_cost
-            + ALIGN_W * align
+            + self.align_weight * align
+            + YAW_W * abs(yaw_rate)
         )
 
         self._prev_distance = distance

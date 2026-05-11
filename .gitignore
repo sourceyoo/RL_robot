@@ -36,3 +36,6 @@ sim/videos/
 
 # Claude Code 로컬 설정 (개인 권한 등)
 .claude/settings.local.json
+
+# 논문 자료 (PDF 용량 큼, 개인 참고용)
+papers/
