@@ -130,6 +130,12 @@ def main():
     p.add_argument("--start-stage", type=int, default=1,
                    help="시작 단계 번호 (1-indexed). 이전 단계 model.zip이 있어야 함")
     p.add_argument("--device", type=str, default="cuda")
+    p.add_argument("--seed", type=int, default=None,
+                   help="SAC seed (v29 multi-seed 평가용). 미지정시 SB3 default.")
+    p.add_argument("--tb-tag", type=str, default="model3_v28",
+                   help="tb_logs sub-dir 이름 (v29 multi-seed면 model3_v29_seed{N})")
+    p.add_argument("--runs-subdir", type=str, default=None,
+                   help="runs/ 안에서 stage tag prefix (예: v29_seed0 → runs/v29_seed0/s3d_arc90)")
     args = p.parse_args()
 
     if args.start_stage < 1 or args.start_stage > len(STAGES):
@@ -141,11 +147,9 @@ def main():
     plot_dir = sim_dir / "plots"
     # 모든 단계의 tensorboard log를 model3_vN 폴더 안에 묶어 TB UI에서 v별 비교 가능.
     # 새 학습 시작할 때마다 v숫자를 올려도 되고, 같은 v 안에서 stage 진행도 가능.
-    # v24-A signed yaw — 진동 해결 ✓ but 천장 미돌파 (end 28%, peak 35%).
-    # v25-A: signed yaw + YAW_W 0.005 → 0.007. signed 안정성 × v23-A 신호 강도.
-    # 가설: signed면 좌우 흔들기 페널티 작동 → weight ↑해도 진동 안 일어남.
-    # 다른 변수 v22/v24-A 그대로. --start-stage 6으로 s3d만 fine-tune.
-    tb_dir = sim_dir / "tb_logs" / "model3_v25"
+    # v29: v22 카드 (yaw `|·|`·0.005) multi-seed 평가 — seed 0/1/2 각각 별도 tb_dir.
+    # --tb-tag와 --runs-subdir로 분리.
+    tb_dir = sim_dir / "tb_logs" / args.tb_tag
     tb_dir.mkdir(parents=True, exist_ok=True)
 
     # Viewer thread 단 한 번만 — 첫 stage env로 시작, 모든 stage 통과
@@ -165,6 +169,8 @@ def main():
         time.sleep(1.0)  # viewer가 뜰 시간
 
     # 시작점 모델 (Stage 2 이상부터 시작 시)
+    # v29: --runs-subdir 지정 시 prev_model은 *기본* runs_dir/{prev_tag}/model.zip
+    # (v22 s3c 같은 공용 init), 학습 결과는 runs_dir/{subdir}/{tag}/로 저장.
     prev_model_path = None
     if args.start_stage > 1:
         prev_tag = STAGES[args.start_stage - 2]["tag"]
@@ -176,6 +182,13 @@ def main():
             return
         print(f"[curriculum] Stage {args.start_stage}부터. init = {prev_model_path}")
 
+    if args.runs_subdir:
+        out_runs_dir = runs_dir / args.runs_subdir
+        out_runs_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[curriculum] 학습 결과 저장 경로 = {out_runs_dir}")
+    else:
+        out_runs_dir = runs_dir
+
     try:
         for i in range(args.start_stage - 1, len(STAGES)):
             stage = STAGES[i]
@@ -183,7 +196,7 @@ def main():
                   f"min_steps={args.min_steps:,}, max_steps={stage['max_steps']:,}\n"
                   f"{'='*60}")
 
-            run_dir = runs_dir / stage["tag"]
+            run_dir = out_runs_dir / stage["tag"]
             run_dir.mkdir(parents=True, exist_ok=True)
 
             theta_range = (stage["theta_min"], stage["theta_max"])
@@ -197,6 +210,11 @@ def main():
                 print(f"[curriculum] {prev_model_path} 정책 로드 (fine-tuning)")
                 model = SAC.load(str(prev_model_path), env=env, device=args.device)
                 model.tensorboard_log = str(tb_dir)
+                # v29: load 후 seed 재설정 — 같은 init에서 다른 seed로 fine-tune.
+                # SAC.load 후 seed property는 init seed 그대로라 set_random_seed 호출.
+                if args.seed is not None:
+                    model.set_random_seed(args.seed)
+                    print(f"[curriculum] seed = {args.seed} (post-load reset)")
             else:
                 # v16-A: NN default [256,256] 회귀. v12에서 도입한 [256,256,128]이
                 # narrow mode 학습 가속하는 부작용 제거. v11이 default NN으로 26% 달성한 만큼
@@ -209,14 +227,20 @@ def main():
                     tau=0.005, gamma=0.99, train_freq=1, gradient_steps=1,
                     learning_starts=1_000,
                     ent_coef="auto_0.1",  # entropy 초기값 0.1 (collapse 늦춤)
+                    seed=args.seed,
                 )
 
             callbacks = []
             if not args.no_viewer:
                 callbacks.append(PolicySnapshotCallback(model_holder, sync_every=500))
+            # v30: best-model checkpoint 항상 활성.
+            # v29 분석으로 모든 seed가 s3d 800~900k peak 후 1M까지 후퇴 확인 →
+            # 학습 끝 model.zip만으로는 진짜 best를 보존 못 함. peak 시점을
+            # model_best.zip로 별도 저장 (학습 끝 model.zip은 그대로 유지).
             callbacks.append(CurriculumStopCallback(
                 threshold=args.threshold, window=100,
                 check_every=5000, min_steps=args.min_steps,
+                best_save_path=run_dir / "model_best",
             ))
             # v10: stage별 차등 floor. 작은 회전(s3a/b 0.002~0.003)은 정확도, 큰 회전(s3c 0.005,
             # s3d 0.006)은 비대칭 ctrl 패턴 발견 위해 entropy 유지. v8 0.005·v9 0.002 모두

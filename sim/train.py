@@ -71,7 +71,8 @@ class CurriculumStopCallback(BaseCallback):
 
     def __init__(self, threshold: float = 0.9, window: int = 100,
                  check_every: int = 5000, min_steps: int = 30_000,
-                 dt: float = 0.02, verbose: int = 1):
+                 dt: float = 0.02, best_save_path: "Path | None" = None,
+                 verbose: int = 1):
         super().__init__(verbose)
         self.threshold = threshold
         self.window = window
@@ -83,6 +84,12 @@ class CurriculumStopCallback(BaseCallback):
         self.recent_lengths: collections.deque = collections.deque(maxlen=window)
         self.recent_aligns: collections.deque = collections.deque(maxlen=window)
         self.last_check = 0
+        # v30 best-model checkpoint: reach_rate max 갱신 시 별도 저장.
+        # v29 분석으로 800~900k peak 후 1M까지 catastrophic forgetting 확인 (3 seed).
+        # best_save_path가 None이면 비활성. 활성 시 학습 끝 model.zip과 공존.
+        self.best_save_path = best_save_path
+        self.best_rate = -1.0
+        self.best_step = 0
 
     def _on_step(self) -> bool:
         infos = self.locals.get("infos", [])
@@ -114,9 +121,8 @@ class CurriculumStopCallback(BaseCallback):
                     (sum(self.recent_lengths) / len(self.recent_lengths)) * self.dt,
                 )
 
-        # 조기 종료 체크 (threshold > 0일 때만)
-        if self.threshold <= 0:
-            return True
+        # min_steps 이후 + 체크 주기 + 충분한 ep 데이터 모이면 reach_rate 평가.
+        # 동일 조건에서 (a) best 갱신 시 model_best.zip 저장 (b) threshold 도달 시 조기 종료.
         if self.num_timesteps < self.min_steps:
             return True
         if self.n_calls - self.last_check >= self.check_every:
@@ -125,7 +131,17 @@ class CurriculumStopCallback(BaseCallback):
                 rate = sum(self.recent_reached) / len(self.recent_reached)
                 print(f"[curriculum] step {self.num_timesteps}: reach_rate = {rate:.1%} "
                       f"(window={len(self.recent_reached)})")
-                if rate >= self.threshold:
+
+                # best-model checkpoint: max 갱신 시 별도 저장
+                if self.best_save_path is not None and rate > self.best_rate:
+                    self.best_rate = rate
+                    self.best_step = self.num_timesteps
+                    self.model.save(str(self.best_save_path))
+                    print(f"[curriculum] ★ best 갱신 reach_rate={rate:.1%} "
+                          f"step={self.num_timesteps} → {self.best_save_path}.zip")
+
+                # 조기 종료 (threshold > 0일 때만)
+                if self.threshold > 0 and rate >= self.threshold:
                     print(f"[curriculum] ✓ reach_rate {rate:.1%} >= {self.threshold:.0%} "
                           f"— 학습 조기 종료 (다음 단계로)")
                     return False
@@ -312,6 +328,9 @@ def main():
                    help="reach_rate 체크 주기 step")
     p.add_argument("--ent-floor", type=float, default=0.0,
                    help="EntCoefFloorCallback floor (0이면 비활성). v10에서 stage별 차등.")
+    p.add_argument("--save-best", action="store_true",
+                   help="reach_rate max 갱신 시 model_best.zip 별도 저장 (v30~). "
+                        "v29 분석으로 후반 catastrophic forgetting 발견 → peak 모델 보존용.")
     args = p.parse_args()
 
     run_dir = Path(__file__).parent / "runs" / args.tag
@@ -356,13 +375,20 @@ def main():
         callbacks.append(PolicySnapshotCallback(model_holder, sync_every=500))
         print(f"[train] {args.steps} step max + viewer (정책 500 step마다 갱신)")
 
-    if args.success_threshold > 0:
+    # CurriculumStopCallback은 조기 종료 또는 best 저장 둘 중 하나라도 켜져 있으면 추가.
+    # (이 콜백이 reach_rate·align·final_dist TB 메트릭도 기록.)
+    best_save_path = (run_dir / "model_best") if args.save_best else None
+    if args.success_threshold > 0 or args.save_best:
         callbacks.append(CurriculumStopCallback(
             threshold=args.success_threshold,
             window=args.eval_window,
             check_every=args.check_every,
+            best_save_path=best_save_path,
         ))
-        print(f"[train] curriculum: reach_rate ≥ {args.success_threshold:.0%}이면 조기 종료")
+        if args.success_threshold > 0:
+            print(f"[train] curriculum: reach_rate ≥ {args.success_threshold:.0%}이면 조기 종료")
+        if args.save_best:
+            print(f"[train] best-model: reach_rate max 갱신 시 {best_save_path}.zip 저장")
 
     if args.ent_floor > 0:
         callbacks.append(EntCoefFloorCallback(floor=args.ent_floor))
