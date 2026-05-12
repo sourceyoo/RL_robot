@@ -88,7 +88,9 @@ STAGES = [
         "desc": "Stage 3b — 좌우 ±30° (θ ∈ π ± π/6)",
         "theta_min": PI - PI / 6, "theta_max": PI + PI / 6,
         "success_radius": 0.08,
-        "max_steps": 250_000,
+        # v31-A: 250k → 1M. v21에서 s3b 69%로 max_steps에 강제 진행 — 학습량 부족 가설 검증.
+        # s3d와 동급 학습량으로 천장이 진짜 카드 한계인지 학습량 부족인지 분리.
+        "max_steps": 1_000_000,
         "episode_seconds": 30.0,
         "ent_floor": 0.003,
     },
