@@ -1,5 +1,73 @@
 # CLAUDE.md
 
+Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
+
+**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+
+## 1. Think Before Coding
+
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
+
+Before implementing:
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them - don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+## 2. Simplicity First
+
+**Minimum code that solves the problem. Nothing speculative.**
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+## 3. Surgical Changes
+
+**Touch only what you must. Clean up only your own mess.**
+
+When editing existing code:
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it - don't delete it.
+
+When your changes create orphans:
+- Remove imports/variables/functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
+
+The test: Every changed line should trace directly to the user's request.
+
+## 4. Goal-Driven Execution
+
+**Define success criteria. Loop until verified.**
+
+Transform tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+```
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+```
+
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+---
+
+**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+---
+
+# CLAUDE.md
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## 목적
@@ -134,106 +202,13 @@ python3 curriculum.py --start-stage 4 --seed 0 \
 
 ---
 
-## 학습 결과 — main flow v1 ~ v27 (+ Step 0 eval)
+## 학습 결과·산문 진단·통찰·RL 카드 함정·다음 카드 후보
 
-**현재 미달 stage 재판정 = s3b** (Step 0 100 ep eval로 mean 85.7% — 50 ep 졸업 측정 90.7%과 5%p gap 발견). 학습 졸업 시 50 ep det check 통과(90/92/90)였지만 100 ep로 다시 측정하니 90/81/86% — sample size noise였음. **forgetting은 없음** (s1·s2·s3a 100/100/100% 3 seed 모두). 다음 카드 = **v28 (s3b 안정화, `--det-episodes 50 → 100`)**.
+→ **모든 학습 history는 [`docs/training_log.md`](docs/training_log.md)에** (결별 그룹화·버전별 변경점·Stage 진행 비교·s3d 결과·핵심 통찰·yaw_test 발견·결정적 변경 회고·RL 카드 함정 #7~·카드 평가 방법론·다음 카드 후보).
 
-다음 카드 결정용 표·매트릭스만 본 섹션에 유지. **산문 진단 + Release 인덱스 + 카드 후보 상세 → [`docs/training_log.md`](docs/training_log.md)**.
+→ **s3d_90 라인 (구 v22~v30, 분리됨)** → [`docs/s3d_90_line.md`](docs/s3d_90_line.md). s3b·s3c 미달 상태에서 s3d만 fine-tune했던 잘못된 방향성.
 
-### 결별 그룹화 (main flow)
-
-| 그룹 | 멤버 | 특징 | s3d 천장 |
-|---|---|---|---|
-| A. Baseline + 가산식 reward | v1·v2·v3 | `+0.02·align` 가산항 | 24% |
-| B. 곱셈 보상 실패 | v5·v6·v7 | mode collapse (머리 반대 / 도망) | 16~20% |
-| C. 가산식 복귀 + ent_floor | v8·v9·v10 | 균등/차등. ent_floor 카드 종결 | 13~17% |
-| **D. 정책 표현력 확장** ⭐ | **v11** | action history N=8→16. ±90° 천장 첫 돌파 | **26%** |
-| E. NN 확장 | v12 | net_arch [256,256,128]. s3d catastrophic | 6% ❌ |
-| F~I. reward/NN 카드 | v13~v16 | align ep 비례/fix·reach 5→10·NN 회귀 | 19~21% |
-| **J. action history N=24** | **v17** | s3c·d 동시 회복, 정점 30% 일시 돌파 | **25%** |
-| K. 학습량 ↑ (N=24) | v18 | 500k → 1M — 학습량 부족 가설 reject | 25% |
-| L. N 절충 (N=20) | v19 | s3a 96% best + s3c·d mode collapse | 23% ❌ |
-| M. v19 + ent_floor ↑ | v20 | mode collapse 해결 ✓ but reach 후퇴 (정렬 best 0.84) | 19% |
-| **N. yaw reward** ⭐⭐ | **v21** | `+YAW_W·\|yaw_rate\|·0.005`. **v11 천장 단독 돌파**. 모든 stage 회복 | **29%** |
-| **O. s3b 학습량 ↑** ⭐⭐⭐ | **v22** | s3b max_steps 250k → **1M**, v21 정책 이어받기 (`--start-stage 4`). **s3b TB 90% 졸업** (654k 조기 종료, det 79% — 함정 #13) | 32% (s3b TB 90%, det 79%) |
-| P. ent_floor schedule | **v25-A** | s3b `ent_floor 0.003 → 0` linear decay (1M). **stochastic-det gap 12%p → 8%p**로 감소 ✓ but det 84%로 90% 미달 | s3b det **84%** |
-| Q. det check + 학습량 추가 ❌ | **v26-A** | v25-A 정책 + det check callback (TB 90% trigger 후 det 50 ep 확인) + 학습 1M 추가. **s3b det 80%로 후퇴** — single seed 결과로 카드 천장 추정 | s3b det **80%** (single) |
-| **R. v25-A × multi-seed** ⭐⭐ | **v27** | v25-A 카드 seed 0/1/2 + `--det-check` (50 ep). **학습 졸업 50 ep det 90/92/90% (mean 90.7%)** — 일견 졸업. 그러나 Step 0 후속 100 ep eval로 **90/81/86% (mean 85.7%)** — **50 ep는 sample noise로 운 좋게 측정**. s3b 졸업 가설 partial. forgetting 없음 (s1·s2·s3a 100%) | s3b det **50 ep 90.7%** vs **100 ep 85.7%** ⚠ |
-
-### 버전별 변경점 (main flow v1~v27)
-
-v22까지 변경점은 위 그룹화 표 참조. v22 이후 카드 (s3b 천장 시도):
-
-| 변경 | v22 | v25-A | v26-A | **v27 (× 3 seed)** |
-|---|---|---|---|---|
-| 기반 카드 | v21 (yaw `|·|`0.005·N=20·ent_floor 차등) | (v22) | (v25-A) | (v25-A) |
-| init 정책 | v21 final | v22 final | v25-A final | **v25-A final** (sim/runs/v25/s3b_arc30/) |
-| s3b max_steps | **1M** | (v22) | 1M *추가* (누적 ~1.6M) | 1M (--end-stage 4) |
-| **s3b ent_floor** | 0.003 fix | **0.003 → 0 linear decay (1M)** | (v25-A) | (v25-A) |
-| **det check callback** | — | — | **활성** | **활성** |
-| **seed** | default | default | default | **0 / 1 / 2** (multi-seed) |
-| s3b TB end | 91% (peak 92%) | 92% (peak) | 90% | 90 / 91 / 94% |
-| **s3b det reach** | **79%** | **84%** | **80%** ↓ | **90 / 92 / 90%** ⭐⭐⭐ (mean 90.7 ± 1.2) |
-| 졸업 step | 654k (TB false) | 615k (TB false) | 1M 완주 (det 미달) | **705k / 880k / 245k** (det 진짜 졸업) |
-| 한 줄 평가 | 학습량 ↑ 졸업 — but TB false positive | gap 좁힘 ✓ but single 84% | single seed 80% (single artifact) | **multi-seed로 카드 valid 확정** ⭐⭐⭐ |
-
-### Stage 진행 비교 (main flow)
-
-**v22까지는 TB stochastic 기준. 함정 #13 발견 후 v22~v26은 deterministic eval로 보정**:
-
-| Stage | v8 | v10 | v11 | v17 | v19 | v20 | v21 | **v22 (TB/det)** | **v25-A (det)** | **v26-A (det)** | **v27 50ep / 100ep (3 seed mean)** |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| s3a (±15°) | 74% | 89% | 67% | 66% | 96%* | 63% | **90%** ⭐ | 100/100 | 98 | **100** | **100 / 100** ✓ |
-| s3b (±30°) | 70% | 72% | 44% | 62% | 61% | 53% | 69% | **90/79** | **84** | **80** ↓ | **90.7 / 85.7** ⚠ (gap 5%p) |
-| s3c (±60°) | **46%** | 28% | 38% | 33% | 28% | 21% | 38% | 37/42 | 43 | 42 | — / **44.0** |
-| s3d (±90°) | 17% | 13% | 26% | 25% | 23% | 19% | 29% | **32**(peak50)/26 | 30 | 28 | — / **30.7** |
-
-*v19 96%는 seed 분산 운. v22~v26-A는 `--start-stage 4`로 s3b만 학습. v27은 `--start-stage 4 --end-stage 4`로 s3b만 학습 (init=v25-A), seed 0/1/2. **Step 0 결과 (eval_stages.py 100 ep × 3 seed)**: s1·s2·s3a forgetting 없음, **s3b 100 ep로는 mean 85.7% (개별 90/81/86%)** — 50 ep 졸업 측정과 5%p 차이. s3c·s3d는 v25-A에서 init 후 변경 없음 (s3b만 fine-tune).
-
-### s3d (±90°) 결과 — 마지막 100 ep 윈도우 (v11~v22, 이전은 docs)
-
-| 버전 | reach | avg_align | final_dist | 한 줄 평가 |
-|---|---|---|---|---|
-| **v11** ⭐ | 26% | +0.58 | 0.57m | N=16 — 천장 첫 돌파 |
-| **v17** | 25% | +0.43 | 0.55m | N=24 — s3c·d 동시 회복, 정점 30% 일시 돌파 |
-| v18 | 25% | +0.57 | 0.57m | N=24 + 1M — 학습량 부족 가설 reject |
-| v19 ❌ | 23% | −0.37 | 0.35m | N=20 단독 — s3c·d mode collapse |
-| v20 | 19% | **+0.84** ⭐ | 0.78m | ent_floor ↑ — 정렬 best but 추진 worst |
-| **v21** ⭐⭐ | 29% | +0.51 | 0.67m | **+yaw reward — v11 천장 단독 돌파**. 정점 38%, ep 21.8s best |
-| **v22** ⭐⭐⭐ | **32%** ⭐ / 28%† | +0.73 | 0.64m | s3b 1M 졸업 정책 → s3d 1M. run1 32%/peak 50%, run2 28%/peak 50%. 정착 카드의 s3b 90% 위 첫 결과 |
-
-†v22 s3d 두 번 run (s3d_arc90_1·_2) — 의미 분석 보류.
-
-### 핵심 통찰 (main flow)
-
-- ✅ **Stage 1·2** 60k step에 100% (모든 버전).
-- ⭐ **N 축이 천장 카드의 가장 인과 명확한 축** — v11 (+9%p) → v17 (정점 30%).
-- ❗ **단일 축 카드(N/ent/reward) 모두 v11 26% 천장 못 깸**. 천장 돌파 = **yaw reward (v21)**.
-- ⭐⭐ **yaw reward (v21)**: 회전 시도 자체에 +보상 → "정렬만 mode" 깨고 mode catalysis trigger. v11 천장 단독 돌파.
-- ⭐⭐⭐ **s3b 학습량 부족 (v22)**: v21까지 s3b max_steps 250k가 짧았던 것. 250k → 1M으로 **s3b TB 90% 달성** (654k 조기 종료). 다른 stage도 같은 의심 — `max_steps`는 카드 한계 진단 전에 학습량부터 충분히 줘야 한다는 교훈.
-- ⚠ **v22 졸업의 false positive (함정 #13)**: TB 90%는 stochastic 진동 정점 운. deterministic eval은 79% — **s3b 90% 졸업 무효**. 졸업 확정은 항상 `eval_stages.py` deterministic.
-- ⚠ **stochastic-det gap 본질 (v25-A)**: `ent_floor 0.003 → 0` linear decay로 학습 후반 정책을 deterministic하게 압박 → gap 12%p → 8%p로 감소. 단 det 84%로 90% 미달 (single seed).
-- ❌ **v26-A single seed 80%**: v25-A 정책 + det check + 1M 추가 학습 = s3b det 80% (single). v22 79% → v25-A 84% → v26-A 80% 진동을 카드 천장으로 추정했으나 **v27이 single seed artifact임을 반박**.
-- ⭐⭐ **v27 multi-seed로 s3b 졸업 임계 통과 (50 ep 기준)**: 같은 v25-A 카드 3 seed → 학습 졸업 시 det **90 / 92 / 90%** (mean 90.7 ± 1.2). v22/v25-A/v26-A 79~84% single seed 결론을 부분 반박. 졸업 step 245~880k (×3.6 분산, seed 운).
-- ⚠ **Step 0 100 ep eval — 50 ep는 sample noise로 운 좋은 측정**: 같은 모델 100 ep로 재측정 → 90/81/86% (mean 85.7%, 5%p gap). **seed1 만 정확히 90%**, seed0 81%·seed2 86%로 임계 미달. **50 ep det check는 표본 적어 학습 중 졸업 trigger에는 적합하나 진짜 졸업 확정 측정으로는 부족**. 함정 #16 추가.
-- ✓ **forgetting 없음 (Step 0)**: 3 seed 모두 s1·s2·s3a 100/100/100% — s3b fine-tune이 이전 stage 망가뜨리지 않음. mixed sampling/rehearsal 새 축 카드 불필요.
-- ⭐ **det check 인프라 실증 (v27 seed2)**: 145k에서 TB 90% trigger → det 84% (false positive) → cooldown after 245k에서 TB 94% / det 90% (진짜 졸업). **`--det-check` 옵션 default 활성 권장**.
-
-### 핵심 yaw_test.py 발견
-
-| 측정 | yaw rate |
-|---|---|
-| 학습된 v3 정책 | 0.94°/s |
-| 대칭 sine | 0.49°/s |
-| **D2 (75% 음 + 25% 양 비대칭)** | **4.60°/s** ✓ |
-
-→ ±90° 회전이 20s 안에 물리적 가능 (D2 × 20s = 92°). RL이 비대칭 패턴 발견 못 함이 본질적 병목 — v11 N=16에서 부분 해결.
-
----
-
-## s3d_90 라인 (분리됨)
-
-구 v22~v30은 별도 파일·release line으로 분리 → **[`docs/s3d_90_line.md`](docs/s3d_90_line.md)** (`models-s3d_90-v1~v9`, 9개 카드). s3b·s3c 미달 상태에서 s3d만 fine-tune했던 잘못된 방향성. main flow의 다음 카드는 새 v22 (s3b 90% 달성)로 새로 시작.
+**현재 상태**: → [`docs/training_log.md`](docs/training_log.md) "학습 결과 요약 — main flow" 섹션 첫 줄 (매 카드마다 갱신).
 
 ---
 
@@ -274,46 +249,18 @@ v22까지 변경점은 위 그룹화 표 참조. v22 이후 카드 (s3b 천장 �
 
 ---
 
-## 알아둘 함정 (이미 발견·해결된 것)
+## 알아둘 함정 — 물리·모델 (절대 규칙)
 
-**물리·모델 (v1 이전)**:
-1. **6DOF freejoint**: pitch cross-coupling으로 추진 방향 뒤집힘. → 3DOF planar.
+1. **6DOF freejoint**: pitch cross-coupling으로 추진 방향 뒤집힘. → 3DOF planar 유지. **freejoint로 바꾸지 마세요**.
 2. **fluidshape**: MuJoCo `none`/`ellipsoid` 둘뿐.
 3. **단일 passive fin (k=4e-7)** / **다단 passive fin** / **CPG 액션 (MODE_2)** / **F1 STEP 다중 ellipsoid**: 모두 추진 못 만듦. → MODE_3 + 단일 motor + Ecoflex passive fin 정착.
-
-**RL 카드 (main flow v1~v21)**:
-
-7. **곱셈 보상 (v5/v7)**: mode collapse (머리 반대·도망). 가산식이 정착.
-8. **차등 N / 차등 NN**: SAC.load weight transfer 불가 (obs Box mismatch 또는 layer random init). **curriculum init_from 무력화**.
-9. **단일 축 reward/NN 카드 (v12~v16)**: align ratio·reach bonus·NN 확장/회귀 — 모두 v11 26% 천장 미돌파. 단독 카드 한계.
-10. **N=24 + 학습량 ↑ (v18)**: 1M도 end 25% — 학습량 부족 가설 reject. N=24 본질적 진동.
-11. **N=20 단독 (v19)**: s3a 96% best but s3c·d mode collapse (align −0.37, final_dist 0.35m). narrow mode 매개.
-12. **ent_floor 강화 (v20)**: collapse 해결 ✓ but reach 후퇴 ❌. entropy ↑이 정렬에만 활용.
-13. **TB 졸업 callback false positive** ⭐⭐⭐: `CurriculumStopCallback`은 random eval window(±10%p 진동)에서 진동 정점 시점에 trigger 가능. 진짜 정책 실력보다 1차 졸업 신호가 ↑ 나옴. **v22 s3b 사례**: TB end 90.0%/peak 91% → deterministic eval 79% (마지막 100 measurement mean 85.9%, min 79%, max 91%). callback이 4 측정점 91% 시점에 trigger되어 false 졸업. → **졸업 확정은 항상 `eval_stages.py` deterministic eval**. TB는 학습 중 신호일 뿐. **v26-A에서 det check callback (train.py `CurriculumStopCallback.det_env_fn`) 추가** — TB 90% trigger 후 det 50 ep로 진짜 확인 → false positive 차단. v26-A는 1M까지 det 모두 미달(82·72·82%)로 학습 완주, 카드 천장 입증.
-14. **v25-A·v26-A 단일 seed 80~84% 결론은 lower outlier (v27이 반박)**: ent_floor `0.003 → 0` linear decay가 stochastic-det gap 12%p → 8%p로 좁힘 ✓. v22 79% → v25-A 84% → v26-A 80% single seed 결과로 "현 카드 본질 천장 80~84%" 결론 → **v27 multi-seed (3 seed mean 90.7%)로 카드 valid 입증**. **single seed로 카드 천장 판단 X — 최소 3 seed**. s3d_90 라인 교훈이 main flow에도 동일하게 적용 (함정 #14 패턴).
-15. **TB false positive 차단 = `--det-check` callback (v27 seed2 실증)**: v22 함정 #13 차단 인프라. v27 seed2가 145k에서 TB 90% trigger → det 84% ❌ → cooldown 100k → 245k에서 진짜 졸업. det check 없었다면 145k에서 잘못 졸업했을 것. **새 학습은 default `--det-check` 활성**.
-16. **`--det-episodes` 50은 학습 trigger엔 OK but 졸업 확정 측정으로 부족** (v27 Step 0 발견): v27 학습 중 50 ep det check 90/92/90% (mean 90.7) 통과 → 졸업 → 100 ep eval로 재측정하니 90/81/86% (mean 85.7%, **5%p gap**). 50 ep는 sample 적어 운 좋은 분포에서 trigger 가능. **졸업 확정은 항상 `eval_stages.py` 100 ep** (50 ep는 학습 중 cheap check). **다음 학습부터 `--det-episodes 100` 권장**.
-
-**s3d_90 라인 함정** → [`docs/s3d_90_line.md`](docs/s3d_90_line.md) (YAW_W 변형 / single seed baseline / end metric drift artifact 등).
+4. **중력**: `<flag gravity="disable"/>` 유지. 켜면 가라앉음.
+5. **euler "3.14159 0 0" + axis 부호 보정**: planar joint 축 `(1,0,0)`·`(0,-1,0)`·`(0,0,-1)` 보존. base_link 시작 자세에 맞춤.
+6. **Inertial 값**: base는 MATLAB CG.m 실물 측정, tail·fin은 MODE_3 URDF 합의값. **임의 수정 X**.
 
 → **정착 조합 = MODE_3 + Ecoflex passive fin + 3DOF planar + v21 카드 (N=20·ent_floor 차등·yaw \|·\|·0.005)**.
 
-### 가장 결정적이었던 변경 (회고)
-
-1. **3DOF planar** — pitch wobble 제거 (부호 뒤집기 본질)
-2. **MATLAB CG.m 값** — sim2real 정합성
-3. **MODE_3 fin + Ecoflex 1070** — wave-thrust
-4. **action history N=16 (v11)** — ±90° 천장 첫 돌파
-5. **yaw_rate 보상 (v21)** ⭐⭐ — v11 천장 단독 돌파 (s3d 29%, 정점 38%)
-6. **v22 s3b 학습량 1M** ⭐⭐ — 250k가 부족이었음 입증 (단 TB false positive였음)
-7. **v25-A ent_floor schedule + v27 multi-seed** ⭐⭐ — stochastic-det gap 좁힘 + multi-seed로 s3b 50 ep 졸업 임계 통과 (90.7%). v22~v26 single seed 결론 부분 정정.
-8. **Step 0 100 ep eval (v27 후속)** — 50 ep det check sample noise 발견 (5%p gap). 졸업 확정 표준 = 100 ep eval 본격 확립. 함정 #16.
-
-**카드 평가 방법론** (s3d_90 라인 + main flow v27에서 본격 확립):
-- **multi-seed × deterministic eval** (single seed로 카드 천장 판단 금지)
-- **`--det-check` callback** (TB false positive 차단)
-- **`eval_stages.py` 6 stage** (catastrophic forgetting 점검)
-- **`model_best.zip` 인프라** (peak 시점 보존)
+**RL 카드 함정 (#7~#17) + s3d_90 라인 함정** → [`docs/training_log.md`](docs/training_log.md) (RL 카드 시행착오 회고).
 
 ---
 
@@ -343,61 +290,4 @@ gh release download models-vN -p '*.tar.gz' && tar -xzf runs-models-vN.tar.gz -C
 
 ---
 
-## 다음 후보 (미해결)
-
-**curriculum 진행 상태 (Step 0 = v27 후 100 ep eval × 3 seed)**: s1·s2·s3a **100%** ✓ (forgetting 없음) / **s3b 85.7% ± 3.7%** (mean) — 90% 임계 미달, seed1만 정확히 90% / s3c 44% (v25-A init 그대로) / s3d 30.7%.
-
-### 우선순위 1: s3b 안정화 — 100 ep 기준 mean 90%+ 달성
-
-50 ep 졸업 측정(90.7%)과 100 ep mean (85.7%) 5%p gap이 sample noise. 핵심 카드 = `--det-episodes 100`으로 학습 중 진짜 졸업까지 학습 지속.
-
-1. **v28 — s3b 안정화 (det-episodes 100)** ⭐⭐⭐
-   - init: v25-A 모델 (`sim/runs/v25/s3b_arc30/model.zip`, 깨끗한 비교 위해 v27과 동일)
-   - 카드 (ent_floor schedule, yaw `|·|`·0.005, N=20): v25-A 그대로
-   - **`--det-episodes 100`** (50 → 100, 본질 변경)
-   - `--det-check` 활성, s3b max_steps 1M
-   - seed 0/1/2 multi-seed
-   - 학습 후 `eval_stages.py` × 3 seed 100 ep 필수
-   - 예상 ~6시간 (sequential) 또는 ~2시간 (병렬)
-   - 가설 1: 학습 중 100 ep 검증 → 진짜 90% 도달까지 학습 지속, mean 90~92% 졸업
-   - 가설 2: 1M 안에 100 ep 90% 도달 못함 (현 카드 진짜 천장 86~89%) → 새 축
-
-### 우선순위 2: v28 결과에 따른 다음 카드
-
-| v28 결과 | 다음 카드 |
-|---|---|
-| 100 ep mean ≥ 90% | ✓ s3b 졸업 확정 → v29 (s3c 학습) |
-| 86~89% | ⚠ 카드 한계 — 새 축 (yaw sign-aware / N 변경 등) |
-| < 86% | ❌ v27 결과보다 후퇴 — 카드 변경 + multi-seed |
-
-### 우선순위 3: s3c 졸업 후 s3d
-
-s3b 졸업 후 v29 (s3c 1M + det-episodes 100 + multi-seed). 같은 방법론.
-
-### s3 외 인프라/메타 카드 (낮은 우선순위)
-
-2. **HER (Hindsight Experience Replay)** — env Dict obs 큰 변경. 강력하나 구현 비용 큼.
-3. **fin actuator 추가** — 단일 모터 한계 풂. (사용자 명시 제외)
-4. **ANN surrogate (Lighthill / Zhong)** — fluid model 우회. 실물 motion capture 필요.
-
-### 새 축 카드 (현재 필요 없음 — v27이 reject)
-
-v22~v26 single seed 결과로 "현 카드 천장 80~84%" 결론에 기반한 새 축 후보들 (yaw sign-aware / N 변경 / progress 가중치 등)은 v27 multi-seed로 카드 valid 입증됨에 따라 **현재 진행 불필요**. s3c·s3d에서 카드 한계 입증되면 그때 검토.
-
-### 단일 지느러미의 천장
-
-yaw_test.py로 **yaw rate 물리 상한 ~4.6°/s** (D2 × 20s = 92°, ±90° 마진 작음).
-
-**카드 매트릭스 (Step 0 시점)**:
-- N (시간적 표현력) v11/v17/v19 — 정점 30% 가능
-- entropy v8~v10/v20/v25-A — collapse 해결 + stochastic-det gap 좁힘
-- align/reach 가중치 v12~v15 — 비율 카드 한계
-- **yaw reward v21** ⭐⭐ — 천장 돌파 (s3d 29% / 정점 38%)
-- **s3b 학습량 (v22)** — 250k 부족 입증, but single seed TB false positive
-- **ent_floor schedule (v25-A) + multi-seed (v27)** ⭐⭐ — s3b 50 ep 졸업 임계 통과 (90.7%)
-- **det check callback 50 ep (v27)** ⭐ — TB false positive 차단 ✓ but 졸업 확정 측정으론 sample noise
-- **`--det-episodes 100` (v28 예정)** — 100 ep 졸업 측정으로 sample noise 제거
-
-→ **카드 평가 표준**: deterministic eval × 3 seed × 100 ep (`eval_stages.py`). single seed / 50 ep는 lower/upper outlier 위험.
-
-⚠ **카드 평가는 항상 "가장 낮은 미달 stage" 위에서**. Step 0 후 s3b 100 ep mean 85.7%로 임계 미달 — **다음 = v28 s3b 안정화** (--det-episodes 100). s3c·s3d 카드는 s3b 100 ep 90% 달성 후.
+→ **다음 카드 후보·우선순위·평가 매트릭스 → [`docs/training_log.md` 다음 카드 후보 상세](docs/training_log.md)**.

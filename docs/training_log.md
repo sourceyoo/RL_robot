@@ -1,15 +1,16 @@
-# 학습 로그 — main flow v1 ~ v21
+# 학습 로그 — main flow v1 ~ v28+
 
-CLAUDE.md 본문에서 분리한 산문 진단 + 릴리스 인덱스. 표·매트릭스·함정·다음 후보는 CLAUDE.md에 유지.
+CLAUDE.md에서 분리한 학습 history 전체 — 결과 표·매트릭스·산문 진단·통찰·RL 카드 함정·결정적 변경 회고·다음 카드 후보. CLAUDE.md는 규칙·사실·코드 작업 가이드만 유지 (모델·물리 함정 #1~#6 포함).
 
 > **s3d_90 라인 (구 v22~v30, 분리됨)** → 별도 파일 [`docs/s3d_90_line.md`](s3d_90_line.md). 본 파일은 main flow만 다룸.
 
 ## 작성 규칙
 
-- 본 파일: `## 주요 진단 (산문)` 섹션 끝에 `### vN-X (한 줄 제목)` 새 절 추가. 가설·결과·진단·다음 방향 자유 산문.
-- CLAUDE.md: 표 갱신만 (그룹화·변경점·Stage 비교·s3d 100 ep). 종결·돌파 카드면 통찰/함정/매트릭스 한 줄도 갱신.
-- 카드 후보가 바뀌면 본 파일 `## 다음 카드 후보 상세` 섹션도 같이 수정.
-- CLAUDE.md char 수 30k 임계 모니터링.
+- 학습 history (표·매트릭스·산문·통찰·RL 카드 함정·다음 후보) 모두 본 파일에 작성. CLAUDE.md엔 학습 결과 추가하지 않음.
+- 산문 진단: `## 주요 진단 (산문) — main flow` 끝에 `### vN-X (한 줄 제목)` 새 절 추가.
+- 종결·돌파 카드면 본 파일의 그룹화 표·변경점 표·Stage 진행 비교 표·s3d 결과 표·핵심 통찰·결정적 변경 회고·다음 카드 후보 갱신.
+- 새 RL 카드 함정 발견 시 `## RL 카드 함정 (#7~)` 끝에 번호 이어서 추가.
+- CLAUDE.md는 코드/모델/규칙 변경 시만 갱신 (학습 결과 변경에 따른 갱신 없음).
 
 ## GitHub Release 인덱스 (main flow)
 
@@ -22,6 +23,77 @@ CLAUDE.md 본문에서 분리한 산문 진단 + 릴리스 인덱스. 표·매�
 - v18: v17 s3d만 fine-tune (1M step) — sim/runs/s3d_arc90/이 그 후 덮어써짐, 별도 백업 없음.
 
 **release 없음** (main flow): v3·v4·v6~v9·v11·v15·v16·v18·v19·v20.
+
+---
+
+## 학습 결과 요약 — main flow v1 ~ v28
+
+**현재 미달 stage = s3b, 카드 천장 ~84% 확정** (v28 100 ep × 3 seed mean 84.3%). v22 79% → v25-A 84% → v26-A 80% → v27 100ep 85.7% → v28 84.3% — 카드 변형(ent_floor schedule / det check / multi-seed / 100 ep) 모두 80~86% 박스. **단일 변경으론 90% 임계 미돌파, 새 축 필수**. forgetting 없음 (s1·s2·s3a 100% 3 seed). 다음 카드 = **v29 (s3b 새 축)** — **v29-B (progress ×15) 진행 중**.
+
+### 결별 그룹화 (main flow)
+
+| 그룹 | 멤버 | 특징 | s3d 천장 |
+|---|---|---|---|
+| A. Baseline + 가산식 reward | v1·v2·v3 | `+0.02·align` 가산항 | 24% |
+| B. 곱셈 보상 실패 | v5·v6·v7 | mode collapse (머리 반대 / 도망) | 16~20% |
+| C. 가산식 복귀 + ent_floor | v8·v9·v10 | 균등/차등. ent_floor 카드 종결 | 13~17% |
+| **D. 정책 표현력 확장** ⭐ | **v11** | action history N=8→16. ±90° 천장 첫 돌파 | **26%** |
+| E. NN 확장 | v12 | net_arch [256,256,128]. s3d catastrophic | 6% ❌ |
+| F~I. reward/NN 카드 | v13~v16 | align ep 비례/fix·reach 5→10·NN 회귀 | 19~21% |
+| **J. action history N=24** | **v17** | s3c·d 동시 회복, 정점 30% 일시 돌파 | **25%** |
+| K. 학습량 ↑ (N=24) | v18 | 500k → 1M — 학습량 부족 가설 reject | 25% |
+| L. N 절충 (N=20) | v19 | s3a 96% best + s3c·d mode collapse | 23% ❌ |
+| M. v19 + ent_floor ↑ | v20 | mode collapse 해결 ✓ but reach 후퇴 (정렬 best 0.84) | 19% |
+| **N. yaw reward** ⭐⭐ | **v21** | `+YAW_W·\|yaw_rate\|·0.005`. **v11 천장 단독 돌파**. 모든 stage 회복 | **29%** |
+| **O. s3b 학습량 ↑** ⭐⭐⭐ | **v22** | s3b max_steps 250k → **1M**, v21 정책 이어받기 (`--start-stage 4`). **s3b TB 90% 졸업** (654k 조기 종료, det 79% — 함정 #13) | 32% (s3b TB 90%, det 79%) |
+| P. ent_floor schedule | **v25-A** | s3b `ent_floor 0.003 → 0` linear decay (1M). **stochastic-det gap 12%p → 8%p**로 감소 ✓ but det 84%로 90% 미달 | s3b det **84%** |
+| Q. det check + 학습량 추가 ❌ | **v26-A** | v25-A 정책 + det check callback (TB 90% trigger 후 det 50 ep 확인) + 학습 1M 추가. **s3b det 80%로 후퇴** — single seed 결과로 카드 천장 추정 | s3b det **80%** (single) |
+| **R. v25-A × multi-seed** ⭐⭐ | **v27** | v25-A 카드 seed 0/1/2 + `--det-check` (50 ep). **학습 졸업 50 ep det 90/92/90% (mean 90.7%)** — 일견 졸업. 그러나 Step 0 후속 100 ep eval로 **90/81/86% (mean 85.7%)** — **50 ep는 sample noise로 운 좋게 측정**. s3b 졸업 가설 partial. forgetting 없음 (s1·s2·s3a 100%) | s3b det **50 ep 90.7%** vs **100 ep 85.7%** ⚠ |
+| **S. v25-A × multi-seed × `--det-episodes 100`** ❌ | **v28** | v25-A 카드 seed 0/1/2 + `--det-check` **100 ep**. seed1만 진짜 졸업 (1M 직전 det 90%), seed 0/2는 max_steps 종료 (det 85%/76%). **100 ep eval 86/90/77% (mean 84.3%)** — v27 100 ep와 σ 안. **현 카드 천장 ~84% 확정, H1 reject** | s3b det **84.3 ± 5.4%p** ❌ |
+
+### 버전별 변경점 (main flow v1~v28)
+
+v22까지 변경점은 위 그룹화 표 참조. v22 이후 카드 (s3b 천장 시도):
+
+| 변경 | v22 | v25-A | v26-A | v27 (× 3 seed) | **v28 (× 3 seed)** |
+|---|---|---|---|---|---|
+| 기반 카드 | v21 (yaw `|·|`0.005·N=20·ent_floor 차등) | (v22) | (v25-A) | (v25-A) | (v25-A) |
+| init 정책 | v21 final | v22 final | v25-A final | v25-A final | **v25-A final** (v27과 동일) |
+| s3b max_steps | **1M** | (v22) | 1M *추가* (누적 ~1.6M) | 1M (--end-stage 4) | 1M (--end-stage 4) |
+| **s3b ent_floor** | 0.003 fix | **0.003 → 0 linear decay (1M)** | (v25-A) | (v25-A) | (v25-A) |
+| **det check callback** | — | — | **활성 (50 ep)** | **활성 (50 ep)** | **활성 (100 ep)** ⭐ |
+| **seed** | default | default | default | 0 / 1 / 2 | **0 / 1 / 2** |
+| s3b TB end | 91% (peak 92%) | 92% (peak) | 90% | 90 / 91 / 94% | 90 / 90 / 91% |
+| **s3b det reach (100 ep)** | 79% | 84% | 80% | **85.7%** (Step 0) | **84.3%** ⚠ (86/90/77) |
+| 졸업 step | 654k (TB false) | 615k (TB false) | 1M 완주 (det 미달) | 705k / 880k / 245k (50 ep det) | **~1M / ~1M / 1M 종료** (seed1만 진짜 졸업) |
+| 한 줄 평가 | 학습량 ↑ 졸업 — but TB false positive | gap 좁힘 ✓ but single 84% | single seed 80% (single artifact) | multi-seed로 50 ep 졸업 — 100 ep로 noise 발견 | **100 ep로 카드 천장 ~84% 확정** ❌ |
+
+### Stage 진행 비교 (main flow)
+
+**v22까지는 TB stochastic 기준. 함정 #13 발견 후 v22~v28은 deterministic eval로 보정**:
+
+| Stage | v8 | v10 | v11 | v17 | v19 | v20 | v21 | **v22 (TB/det)** | **v25-A (det)** | **v26-A (det)** | **v27 50ep / 100ep** | **v28 100ep (3 seed mean)** |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| s3a (±15°) | 74% | 89% | 67% | 66% | 96%* | 63% | **90%** ⭐ | 100/100 | 98 | **100** | 100 / 100 ✓ | **100** ✓ |
+| s3b (±30°) | 70% | 72% | 44% | 62% | 61% | 53% | 69% | **90/79** | **84** | **80** ↓ | 90.7 / 85.7 ⚠ | **84.3 ± 5.4%p** ❌ (86/90/77) |
+| s3c (±60°) | **46%** | 28% | 38% | 33% | 28% | 21% | 38% | 37/42 | 43 | 42 | — / 44.0 | **41.7** (40/43/42) |
+| s3d (±90°) | 17% | 13% | 26% | 25% | 23% | 19% | 29% | **32**(peak50)/26 | 30 | 28 | — / 30.7 | **29.0** (29/32/26) |
+
+*v19 96%는 seed 분산 운. v22~v26-A는 `--start-stage 4`로 s3b만 학습. v27/v28도 동일 (init=v25-A). **v28 결과**: s3b 100 ep mean **84.3%** — v27 85.7%과 σ 안 (-1.4%p). **카드 천장 ~84% 확정**. s3c·s3d는 v25-A init 그대로 (학습 중 -2.3/-1.7%p, σ 안). forgetting 없음 (s1·s2·s3a 100% 3 seed).
+
+### s3d (±90°) 결과 — 마지막 100 ep 윈도우 (v11~v22)
+
+| 버전 | reach | avg_align | final_dist | 한 줄 평가 |
+|---|---|---|---|---|
+| **v11** ⭐ | 26% | +0.58 | 0.57m | N=16 — 천장 첫 돌파 |
+| **v17** | 25% | +0.43 | 0.55m | N=24 — s3c·d 동시 회복, 정점 30% 일시 돌파 |
+| v18 | 25% | +0.57 | 0.57m | N=24 + 1M — 학습량 부족 가설 reject |
+| v19 ❌ | 23% | −0.37 | 0.35m | N=20 단독 — s3c·d mode collapse |
+| v20 | 19% | **+0.84** ⭐ | 0.78m | ent_floor ↑ — 정렬 best but 추진 worst |
+| **v21** ⭐⭐ | 29% | +0.51 | 0.67m | **+yaw reward — v11 천장 단독 돌파**. 정점 38%, ep 21.8s best |
+| **v22** ⭐⭐⭐ | **32%** ⭐ / 28%† | +0.73 | 0.64m | s3b 1M 졸업 정책 → s3d 1M. run1 32%/peak 50%, run2 28%/peak 50%. 정착 카드의 s3b 90% 위 첫 결과 |
+
+†v22 s3d 두 번 run (s3d_arc90_1·_2) — 의미 분석 보류.
 
 ---
 
@@ -304,48 +376,214 @@ det check 없었다면 145k에서 잘못 졸업 (v22 패턴 재발). **`--det-ch
 
 **다음 카드**: **v28 (s3b 안정화, --det-episodes 100)** — 학습 중 100 ep det check로 진짜 90% 도달까지 학습 지속.
 
-## 다음 카드 후보 상세
+### v28 (v25-A 카드 × 3 seed × `--det-episodes 100` — 카드 천장 84% 확정) ❌
 
-**현재 우선순위 = s3b 안정화** (Step 0 100 ep eval로 mean 85.7% 미달 발견, 50 ep 졸업 측정 90.7%과 5%p gap). forgetting 없음 ✓.
+**카드**: v25-A 카드 그대로 (ent_floor `0.003 → 0` linear decay, yaw `|·|`·0.005, N=20). init = v25-A 모델 (v27과 동일). seed 0/1/2 × `--det-check --det-episodes 100`. `--start-stage 4 --end-stage 4` (s3b만), max_steps 1M. 명령:
 
-### 우선순위 1: v28 — s3b 안정화 (`--det-episodes 100`)
+```bash
+python3 curriculum.py --no-viewer --start-stage 4 --end-stage 4 \
+  --seed N --tb-tag model3_v28_seedN --runs-subdir v28_seedN \
+  --init-from sim/runs/v25/s3b_arc30/model.zip \
+  --det-check --det-episodes 100
+```
 
-1. **v28 — s3b 안정화** ⭐⭐⭐
-   - init: v25-A 모델 (`sim/runs/v25/s3b_arc30/model.zip`) — v27과 깨끗한 비교
-   - 카드 (ent_floor schedule, yaw `|·|`·0.005, N=20, NN [256,256]): v25-A 그대로
-   - **본질 변경**: `--det-episodes 50 → 100` ⭐
-   - `--det-check` 활성, s3b max_steps 1M
-   - seed 0/1/2 multi-seed
-   - 학습 후 `eval_stages.py` × 3 seed 100 ep 필수
-   - 예상 시간: ~6시간 (sequential) 또는 ~2시간 (병렬)
-   - 가설 1: 학습 중 100 ep 검증으로 진짜 90%까지 학습 지속 → mean 90~92% 달성
-   - 가설 2: 1M 안 100 ep 90% 도달 불가 → 카드 진짜 천장 86~89%, 새 축 필요
+**가설**:
+- H1 (메인): 100 ep det check로 진짜 90% 도달까지 학습 지속 → mean 90~92% 달성
+- H2 (reject 시): 카드 진짜 천장 86~89% → 새 축 필요
 
-### 우선순위 2: v28 결과 따라 다음 카드
+**학습 중 det check 결과** (3 seed 합산, false positive 차단 실증):
 
-| v28 결과 | 판정 → 다음 카드 |
+| trigger | TB stochastic | det 100 ep | 결과 |
+|---|---|---|---|
+| 1차 | 90% | 83% | ✗ cooldown 705k |
+| 2차 | 90% | 82% | ✗ cooldown 805k |
+| 3차 | 91% | 69% | ✗ cooldown 835k (gap 22%p) |
+| 4차 | 90% | 90% | **✓ seed1 진짜 졸업** (~1.0M 도달 직전) |
+| 5차 | 91% | 81% | ✗ cooldown 940k |
+| 6차 | 92% | 85% | ✗ cooldown 1.1M (1M 직전 false) |
+| 7차 | 90% | 69% | ✗ cooldown 980k |
+| 8차 | 91% | 76% | ✗ cooldown 1.095M |
+
+- **seed 1**: 진짜 졸업으로 조기 종료 (~1M 직전, TB 90% → det 100/100)
+- **seed 0**: 1M max_steps 종료 (final det check 85%로 미달)
+- **seed 2**: 1M max_steps 종료 (final det check 76%로 미달)
+
+**6 stage deterministic eval 결과 (100 ep × 3 seed final 모델)**:
+
+| Stage | seed0 | seed1 | seed2 | **mean** | v27 mean (참고) |
+|---|---|---|---|---|---|
+| s1_forward | 100 | 100 | 100 | **100** ✓ | 100 |
+| s2_anchor | 100 | 100 | 100 | **100** ✓ | 100 |
+| s3a_arc15 | 100 | 100 | 100 | **100** ✓ | 100 |
+| **s3b_arc30** | **86** | **90** | **77** | **84.3 ± 5.4%p** ⚠ | 85.7 |
+| s3c_arc60 | 40 | 43 | 42 | 41.7 | 44.0 |
+| s3d_arc90 | 29 | 32 | 26 | 29.0 | 30.7 |
+
+**핵심 발견**:
+
+1. ❌ **H1 reject — s3b 100 ep mean 84.3%** (90% 임계까지 -5.7%p). v27 85.7%과 σ 범위 (-1.4%p 차이로 통계 noise). **현 카드 본질 천장 = ~84%로 확정**.
+
+2. ⚠ **개별 seed 분산 큼 (σ 5.4%p)**:
+   - seed1 90%: 진짜 졸업 정책 → eval에서도 정확히 임계 통과
+   - seed0 86%: 1M 종료, det check 85% 결과와 일관
+   - seed2 77%: 1M 종료, det check 76% 결과와 일관
+   - **seed별 학습 운에 따라 σ 큼** — 1 seed만 졸업 임계 통과, 나머지 2 seed는 분명히 미달
+
+3. ⚠ **s3b 84%대 천장의 일관성**:
+   - v22 (79%) → v25-A (84%) → v26-A (80%) → v27 100ep (85.7%) → **v28 (84.3%)**
+   - 카드 변형 (ent_floor schedule / det check / multi-seed / 100 ep) 모두 80~86% 박스 안.
+   - **v27의 50 ep 90.7% upper outlier 확정 — sample noise 정확한 측정값**.
+
+4. ⭐ **`--det-episodes 100` 효과 실증** — TB stochastic-det gap이 22%p까지 벌어지는 경우도 잡아냄 (3차 trigger). 50 ep로는 운 좋게 trigger 가능했으나 100 ep는 진짜 90% 도달만 허용.
+
+5. ✓ **catastrophic forgetting 없음** — 3 seed 모두 s1·s2·s3a 100%, s3c·s3d도 v25-A init 그대로 (-2.3%p / -1.7%p, σ 안). v25-A → v28 1M 추가 학습이 다른 stage 손상 없음.
+
+**메타-결론**:
+
+- **현 카드 (yaw `|·|`·0.005·N=20·ent_floor schedule·NN [256,256])의 진짜 천장 = s3b ~84%**. 단일 변경(학습량 / det check / multi-seed / 100 ep) 모두 천장 못 깸.
+- **다음 카드 = 새 축 필수** (단순 학습량 증가나 측정 강화론 임계 90% 미돌파).
+- 새 축 후보: yaw sign-aware reward / N 변경 / progress 가중치 ↑ / NN 확장 ([256,256,128]) / heading error term 추가 등.
+
+**다음 카드**: **v29 (s3b 새 축)** — v29-B (progress 가중치 ↑, ×10 → ×15) 우선 진행 중.
+
+---
+
+## 핵심 통찰 (main flow)
+
+- ✅ **Stage 1·2** 60k step에 100% (모든 버전).
+- ⭐ **N 축이 천장 카드의 가장 인과 명확한 축** — v11 (+9%p) → v17 (정점 30%).
+- ❗ **단일 축 카드(N/ent/reward) 모두 v11 26% 천장 못 깸**. 천장 돌파 = **yaw reward (v21)**.
+- ⭐⭐ **yaw reward (v21)**: 회전 시도 자체에 +보상 → "정렬만 mode" 깨고 mode catalysis trigger. v11 천장 단독 돌파.
+- ⭐⭐⭐ **s3b 학습량 부족 (v22)**: v21까지 s3b max_steps 250k가 짧았던 것. 250k → 1M으로 **s3b TB 90% 달성** (654k 조기 종료). 다른 stage도 같은 의심 — `max_steps`는 카드 한계 진단 전에 학습량부터 충분히 줘야 한다는 교훈.
+- ⚠ **v22 졸업의 false positive (함정 #13)**: TB 90%는 stochastic 진동 정점 운. deterministic eval은 79% — **s3b 90% 졸업 무효**. 졸업 확정은 항상 `eval_stages.py` deterministic.
+- ⚠ **stochastic-det gap 본질 (v25-A)**: `ent_floor 0.003 → 0` linear decay로 학습 후반 정책을 deterministic하게 압박 → gap 12%p → 8%p로 감소. 단 det 84%로 90% 미달 (single seed).
+- ❌ **v26-A single seed 80%**: v25-A 정책 + det check + 1M 추가 학습 = s3b det 80% (single). v22 79% → v25-A 84% → v26-A 80% 진동을 카드 천장으로 추정했으나 **v27이 single seed artifact임을 반박**.
+- ⭐⭐ **v27 multi-seed로 s3b 졸업 임계 통과 (50 ep 기준)**: 같은 v25-A 카드 3 seed → 학습 졸업 시 det **90 / 92 / 90%** (mean 90.7 ± 1.2). v22/v25-A/v26-A 79~84% single seed 결론을 부분 반박. 졸업 step 245~880k (×3.6 분산, seed 운).
+- ⚠ **Step 0 100 ep eval — 50 ep는 sample noise로 운 좋은 측정**: 같은 모델 100 ep로 재측정 → 90/81/86% (mean 85.7%, 5%p gap). **seed1 만 정확히 90%**, seed0 81%·seed2 86%로 임계 미달. **50 ep det check는 표본 적어 학습 중 졸업 trigger에는 적합하나 진짜 졸업 확정 측정으로는 부족**. 함정 #16 추가.
+- ✓ **forgetting 없음 (Step 0 + v28)**: 3 seed 모두 s1·s2·s3a 100/100/100% — s3b fine-tune이 이전 stage 망가뜨리지 않음. mixed sampling/rehearsal 새 축 카드 불필요.
+- ⭐ **det check 인프라 실증 (v27 seed2 + v28 다수)**: 145k에서 TB 90% trigger → det 84% (false positive) → cooldown after 245k에서 TB 94% / det 90% (진짜 졸업). v28도 8회 trigger 중 1회만 진짜 졸업 (TB stochastic-det gap이 22%p까지 벌어진 사례 차단). **`--det-check` 옵션 default 활성 권장**.
+- ❌ **v28 (100 ep det check) — 카드 천장 ~84% 확정**: v25-A 카드 그대로 + `--det-episodes 50 → 100` 변경. 3 seed 100 ep eval mean **84.3% (86/90/77)** — v27 85.7%과 σ 안. v22 79% → v25-A 84% → v26-A 80% → v27 100ep 85.7% → v28 84.3% — 카드 변형 5개 모두 80~86% 박스. **단순 학습량/측정 강화론 90% 미돌파, 새 축 필수**.
+
+---
+
+## 핵심 yaw_test.py 발견
+
+| 측정 | yaw rate |
 |---|---|
-| 100 ep mean ≥ 90% | ✓ s3b 졸업 확정 → v29 s3c |
-| 86~89% | ⚠ 카드 한계 → 새 축 (yaw sign-aware / N 변경 / progress 강화) |
-| < 86% | ❌ 후퇴 → 카드 변경 |
+| 학습된 v3 정책 | 0.94°/s |
+| 대칭 sine | 0.49°/s |
+| **D2 (75% 음 + 25% 양 비대칭)** | **4.60°/s** ✓ |
 
-### 우선순위 3: s3c·s3d (s3b 100 ep 졸업 후)
+→ ±90° 회전이 20s 안에 물리적 가능 (D2 × 20s = 92°). RL이 비대칭 패턴 발견 못 함이 본질적 병목 — v11 N=16에서 부분 해결.
 
-v29 — s3c 1M + det-episodes 100 + multi-seed. v30 — s3d 같은 방법론.
+물리 상한 ~4.6°/s 기준: s3b ±30°는 yaw 여유 큼 — 즉 s3b 84% 천장은 yaw 능력 한계가 아닌 **reward 신호/정책 표현력 한계**.
 
-### 새 축 카드 (현재 필요 없음 — v27이 reject)
+---
 
-v22~v26 single seed 결과로 "s3b 천장 80~84%" 결론에 기반한 새 축 후보들 (yaw sign-aware / N 변경 / progress 가중치 등)은 v27 multi-seed로 카드 valid 입증되어 **현재 진행 불필요**. s3c·s3d에서 카드 한계 입증되면 그때 검토.
+## 가장 결정적이었던 변경 (회고)
 
-### s3 외 인프라/메타 카드 (낮은 우선순위)
+1. **3DOF planar** — pitch wobble 제거 (부호 뒤집기 본질)
+2. **MATLAB CG.m 값** — sim2real 정합성
+3. **MODE_3 fin + Ecoflex 1070** — wave-thrust
+4. **action history N=16 (v11)** — ±90° 천장 첫 돌파
+5. **yaw_rate 보상 (v21)** ⭐⭐ — v11 천장 단독 돌파 (s3d 29%, 정점 38%)
+6. **v22 s3b 학습량 1M** ⭐⭐ — 250k가 부족이었음 입증 (단 TB false positive였음)
+7. **v25-A ent_floor schedule + v27 multi-seed** ⭐⭐ — stochastic-det gap 좁힘 + multi-seed로 s3b 50 ep 졸업 임계 통과 (90.7%). v22~v26 single seed 결론 부분 정정.
+8. **Step 0 100 ep eval (v27 후속)** — 50 ep det check sample noise 발견 (5%p gap). 졸업 확정 표준 = 100 ep eval 본격 확립. 함정 #16.
+9. **v28 (100 ep det check × multi-seed)** ❌ — 카드 천장 ~84% 확정. v22~v28 5개 카드 80~86% 박스. 단순 측정 강화로 임계 못 깬 것 입증 → 새 축 카드 필요. 함정 #17.
 
-2. **HER (Hindsight Experience Replay)** — env Dict obs 큰 변경. 강력하나 구현 비용 큼.
-3. **fin actuator 추가** — 단일 모터 한계 자체를 풂. (사용자 명시 제외)
-4. **ANN surrogate (Lighthill / Zhong)** — fluid model 한계 우회. 실물 motion capture 필요.
+---
 
-### v22~v27 인프라 추가 사항 (정착됨)
+## RL 카드 함정 (#7~)
 
-- **train.py `CurriculumStopCallback.det_env_fn`** (`--det-check`, `--det-episodes`, `--det-cooldown-steps`) — TB 90% trigger 후 deterministic eval 자동 검증. 함정 #13 차단. v27 seed2에서 효과 실증. **default 활성 권장**.
+물리·모델 함정 (#1~#6) → CLAUDE.md 참조. 본 섹션은 RL 카드 시행착오 회고.
+
+7. **곱셈 보상 (v5/v7)**: mode collapse (머리 반대·도망). 가산식이 정착.
+8. **차등 N / 차등 NN**: SAC.load weight transfer 불가 (obs Box mismatch 또는 layer random init). **curriculum init_from 무력화**.
+9. **단일 축 reward/NN 카드 (v12~v16)**: align ratio·reach bonus·NN 확장/회귀 — 모두 v11 26% 천장 미돌파. 단독 카드 한계.
+10. **N=24 + 학습량 ↑ (v18)**: 1M도 end 25% — 학습량 부족 가설 reject. N=24 본질적 진동.
+11. **N=20 단독 (v19)**: s3a 96% best but s3c·d mode collapse (align −0.37, final_dist 0.35m). narrow mode 매개.
+12. **ent_floor 강화 (v20)**: collapse 해결 ✓ but reach 후퇴 ❌. entropy ↑이 정렬에만 활용.
+13. **TB 졸업 callback false positive** ⭐⭐⭐: `CurriculumStopCallback`은 random eval window(±10%p 진동)에서 진동 정점 시점에 trigger 가능. 진짜 정책 실력보다 1차 졸업 신호가 ↑ 나옴. **v22 s3b 사례**: TB end 90.0%/peak 91% → deterministic eval 79% (마지막 100 measurement mean 85.9%, min 79%, max 91%). callback이 4 측정점 91% 시점에 trigger되어 false 졸업. → **졸업 확정은 항상 `eval_stages.py` deterministic eval**. TB는 학습 중 신호일 뿐. **v26-A에서 det check callback (train.py `CurriculumStopCallback.det_env_fn`) 추가** — TB 90% trigger 후 det 50 ep로 진짜 확인 → false positive 차단. v26-A는 1M까지 det 모두 미달(82·72·82%)로 학습 완주, 카드 천장 입증.
+14. **v25-A·v26-A 단일 seed 80~84% 결론은 lower outlier (v27이 반박)**: ent_floor `0.003 → 0` linear decay가 stochastic-det gap 12%p → 8%p로 좁힘 ✓. v22 79% → v25-A 84% → v26-A 80% single seed 결과로 "현 카드 본질 천장 80~84%" 결론 → **v27 multi-seed (3 seed mean 90.7%)로 카드 valid 입증**. **single seed로 카드 천장 판단 X — 최소 3 seed**. s3d_90 라인 교훈이 main flow에도 동일하게 적용 (함정 #14 패턴).
+15. **TB false positive 차단 = `--det-check` callback (v27 seed2 실증)**: v22 함정 #13 차단 인프라. v27 seed2가 145k에서 TB 90% trigger → det 84% ❌ → cooldown 100k → 245k에서 진짜 졸업. det check 없었다면 145k에서 잘못 졸업했을 것. **새 학습은 default `--det-check` 활성**.
+16. **`--det-episodes` 50은 학습 trigger엔 OK but 졸업 확정 측정으로 부족** (v27 Step 0 발견): v27 학습 중 50 ep det check 90/92/90% (mean 90.7) 통과 → 졸업 → 100 ep eval로 재측정하니 90/81/86% (mean 85.7%, **5%p gap**). 50 ep는 sample 적어 운 좋은 분포에서 trigger 가능. **졸업 확정은 항상 `eval_stages.py` 100 ep** (50 ep는 학습 중 cheap check). **다음 학습부터 `--det-episodes 100` 권장**.
+17. **단순 측정 강화로 카드 천장 못 깸 (v28 입증)**: `--det-episodes 50 → 100`만 변경한 v28도 100 ep mean **84.3%** (v27 85.7%과 σ 안). 학습 중 100 ep det check는 false positive (TB-det gap 22%p까지 벌어짐) 잡아내는 데 효과적이나, 카드 본질 천장은 그대로. v22 79% → v25-A 84% → v26-A 80% → v27 85.7% → v28 84.3% — **단일 변경(학습량/측정/seed)으로 80~86% 박스 못 벗어남**. **s3b 90% 임계 돌파 = 새 reward 축 (yaw sign-aware / progress 강화 / N 변경) 필수**.
+
+**s3d_90 라인 함정** → [`docs/s3d_90_line.md`](s3d_90_line.md) (YAW_W 변형 / single seed baseline / end metric drift artifact 등).
+
+→ **정착 조합 = MODE_3 + Ecoflex passive fin + 3DOF planar + v21 카드 (N=20·ent_floor 차등·yaw \|·\|·0.005)**.
+
+---
+
+## 카드 평가 방법론
+
+(s3d_90 라인 + main flow v27~v28에서 본격 확립)
+
+- **multi-seed × deterministic eval** (single seed로 카드 천장 판단 금지, 최소 3 seed)
+- **`--det-check --det-episodes 100` callback** (TB false positive 차단)
+- **`eval_stages.py` 6 stage × 100 ep** (졸업 확정 + catastrophic forgetting 점검)
+- **`model_best.zip` 인프라** (peak 시점 보존)
+
+### v22~v28 인프라 추가 사항 (정착됨)
+
+- **train.py `CurriculumStopCallback.det_env_fn`** (`--det-check`, `--det-episodes`, `--det-cooldown-steps`) — TB 90% trigger 후 deterministic eval 자동 검증. 함정 #13 차단. v27 seed2 + v28에서 효과 실증. **default 활성 권장**.
 - **curriculum.py `--init-from`** — start-stage init 모델 path 명시. v26-A에서 추가.
 - **curriculum.py `--seed --tb-tag --runs-subdir --end-stage`** — multi-seed + single stage 학습 인프라. v27에서 활용.
 - **eval_stages.py** — 모델 1개 6 stage deterministic eval (~20분 CPU). 졸업 확정·forgetting 점검 필수.
+
+---
+
+## 다음 카드 후보 상세
+
+**현재 우선순위 = s3b 새 축 카드** (v28로 현 카드 천장 ~84% 확정, 90% 임계 미달). forgetting 없음 ✓ → 새 축이 s3b에서만 작용하면 됨.
+
+### v29 후보 (s3b 새 reward 축)
+
+v22~v28 5개 카드(학습량 / ent_floor schedule / det check / multi-seed / 100 ep) 모두 80~86% 박스. 단일 변경 효과 입증 끝. **다음 = reward 축 자체를 바꿔야**.
+
+**v29 후보 A (yaw sign-aware)**:
+- 현재: `reward += YAW_W · |yaw_rate| · 0.005` — 회전 시도 자체에 +
+- v29-A: `reward += YAW_W · yaw_rate · sign(target_yaw_error) · 0.005` — target 방향 회전 시만 +
+- 가설: 절대값 reward는 mode catalysis trigger는 ✓ but 정렬 정확도까지 못 끌어올림. sign-aware로 회전+정렬 동시 강제.
+- ⚠ **s3d_90 라인에서 reject** (구 v24-A/v27/v28 — `s3d_90_line.md` 참조). "부호 없음이 mode catalysis의 본질"이라는 결론. 단 s3b 기준 multi-seed 재검증 가치는 있음.
+
+**v29 후보 B (progress 가중치 ↑) — 진행 중 ⏳**:
+- 현재 `progress · 10` → `progress · 15`
+- 가설: 정렬만 mode 줄이고 추진 신호 강화. v28 s3b ep_s 5.6~8.3s (10s ep 한계 근접) — 추진 부족 신호.
+- yaw 축 보존 (mode catalysis 유지) + 추진 신호 단일 강화.
+
+**v29 후보 C (N=20 → 24 or 16)**:
+- v11 N=16 / v17 N=24 / v19~ N=20.
+- ⚠ SAC.load 시 obs Box mismatch → init_from 무력화 (함정 #8). s1부터 새 학습 필요.
+
+**기타 후보**:
+- NN 확장 [256,256,128] — v12 catastrophic이었으나 카드 조합 달라짐. SAC.load layer mismatch (함정 #8).
+- heading error squared term — `-K·(yaw_error)²` 새 axis.
+- time penalty — `-α·step_count`. ep_s 단축 압박.
+
+### 우선순위 (v29-B 결과에 따라 갱신)
+
+1. **v29-B (진행 중)** — progress ×15 multi-seed 결과 대기. mean ≥ 90% → v30 (s3c). 미달 → 다음 후보로.
+2. v29-A (yaw sign-aware) — s3d_90 reject 결과 multi-seed 재검증 필요 시.
+3. v29-C (N 변경) — A·B reject 후, init_from 비용 감수.
+4. NN 확장 / heading squared / time penalty — 새 axis 탐색.
+
+### v29-B 결과 평가 매트릭스
+
+| v29-B 100 ep mean | 판정 → 다음 카드 |
+|---|---|
+| ≥ 90% | ✓ s3b 졸업 → v30 (s3c 같은 axis 적용) |
+| 86~89% | ⚠ 부분 개선 → progress 더 강하게 (×18~20) 또는 yaw sign-aware 조합 |
+| ~84% (v28 동급) | ❌ progress axis 무력 → v29-A multi-seed 또는 새 axis |
+| < 80% | ❌ 후퇴 (정렬 약화 H2 발현) → weight rollback, 다른 axis |
+
+### 우선순위 (장기): s3c·s3d (s3b 90% 졸업 후)
+
+v30 — s3c 1M + s3b 졸업 axis + multi-seed + 100 ep. v31 — s3d 같은 방법론.
+
+### s3 외 인프라/메타 카드 (낮은 우선순위)
+
+- **HER (Hindsight Experience Replay)** — env Dict obs 큰 변경. 강력하나 구현 비용 큼.
+- **fin actuator 추가** — 단일 모터 한계 자체를 풂. (사용자 명시 제외)
+- **ANN surrogate (Lighthill / Zhong)** — fluid model 한계 우회. 실물 motion capture 필요.
