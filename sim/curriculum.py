@@ -28,6 +28,7 @@ from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import CallbackList
 from stable_baselines3.common.env_util import make_vec_env
 
+from fish_env import FishSwimEnv
 from train import (
     PolicySnapshotCallback,
     CurriculumStopCallback,
@@ -93,13 +94,18 @@ STAGES = [
         "max_steps": 1_000_000,
         "episode_seconds": 30.0,
         "ent_floor": 0.003,
+        # v25-A: ent_floor linear decay 0.003 → 0 (학습 1M 동안). v22 s3b TB end 90% vs
+        # deterministic 79% 발견 — SAC random action 진동 정점 trigger의 false positive였음.
+        # 학습 후반 floor 유지가 deterministic policy 완성 막는 가설. 0~1M linear decay로 검증.
+        "ent_floor_end": 0.0,
     },
     {
         "tag": "s3c_arc60",
         "desc": "Stage 3c — 좌우 ±60° (θ ∈ π ± π/3)",
         "theta_min": PI - PI / 3, "theta_max": PI + PI / 3,
         "success_radius": 0.08,
-        "max_steps": 350_000,
+        # v23: 350k → 1M. v22 s3c 37%/peak 50%로 350k 강제 진행 — s3b와 같은 학습량 부족 가설 검증.
+        "max_steps": 1_000_000,
         "episode_seconds": 30.0,
         # v20-A: 0.005 → 0.008. v19(N=20) s3c·d mode collapse (align −0.17/−0.37) 진단
         # = s3a 96% narrow mode 잔재가 큰 회전 entropy floor로 못 깨짐. floor ↑로 강제 탐색.
@@ -131,6 +137,9 @@ def main():
                    help="viewer 없이 빠르게")
     p.add_argument("--start-stage", type=int, default=1,
                    help="시작 단계 번호 (1-indexed). 이전 단계 model.zip이 있어야 함")
+    p.add_argument("--end-stage", type=int, default=None,
+                   help="마지막 진행 단계 (inclusive, 1-indexed). 미지정 시 끝(s3d)까지 자동 진행. "
+                        "현 미달 stage만 돌리려면 --start-stage X --end-stage X.")
     p.add_argument("--device", type=str, default="cuda")
     p.add_argument("--seed", type=int, default=None,
                    help="SAC seed (v29 multi-seed 평가용). 미지정시 SB3 default.")
@@ -138,10 +147,23 @@ def main():
                    help="tb_logs sub-dir 이름 (v29 multi-seed면 model3_v29_seed{N})")
     p.add_argument("--runs-subdir", type=str, default=None,
                    help="runs/ 안에서 stage tag prefix (예: v29_seed0 → runs/v29_seed0/s3d_arc90)")
+    p.add_argument("--init-from", type=str, default=None,
+                   help="v26: start-stage init 모델 path. None이면 이전 stage model.zip 자동.")
+    p.add_argument("--det-check", action="store_true",
+                   help="v26: TB stochastic 90% trigger 후 deterministic eval로 진짜 90% 확인. "
+                        "v22/v25-A 모두 TB 90~92%지만 deterministic 79~84% 였던 false positive 해결.")
+    p.add_argument("--det-episodes", type=int, default=50,
+                   help="v26: deterministic eval 시 ep 수 (기본 50). 비용 ~4분/회.")
+    p.add_argument("--det-cooldown-steps", type=int, default=100_000,
+                   help="v26: det eval 미달 시 다음 평가까지 학습 step (기본 100k).")
     args = p.parse_args()
 
     if args.start_stage < 1 or args.start_stage > len(STAGES):
         print(f"start-stage는 1~{len(STAGES)} 사이여야 합니다.")
+        return
+    end_stage = args.end_stage if args.end_stage is not None else len(STAGES)
+    if end_stage < args.start_stage or end_stage > len(STAGES):
+        print(f"end-stage는 start-stage({args.start_stage})~{len(STAGES)} 사이여야 합니다.")
         return
 
     sim_dir = Path(__file__).parent
@@ -175,8 +197,11 @@ def main():
     # (v22 s3c 같은 공용 init), 학습 결과는 runs_dir/{subdir}/{tag}/로 저장.
     prev_model_path = None
     if args.start_stage > 1:
-        prev_tag = STAGES[args.start_stage - 2]["tag"]
-        prev_model_path = runs_dir / prev_tag / "model.zip"
+        if args.init_from is not None:
+            prev_model_path = Path(args.init_from)
+        else:
+            prev_tag = STAGES[args.start_stage - 2]["tag"]
+            prev_model_path = runs_dir / prev_tag / "model.zip"
         if not prev_model_path.exists():
             print(f"이전 단계 모델 {prev_model_path} 없음. Stage 1부터 시작하세요.")
             if viewer_thread is not None:
@@ -192,7 +217,7 @@ def main():
         out_runs_dir = runs_dir
 
     try:
-        for i in range(args.start_stage - 1, len(STAGES)):
+        for i in range(args.start_stage - 1, end_stage):
             stage = STAGES[i]
             print(f"\n{'='*60}\n{stage['desc']}\n  threshold={args.threshold:.0%}, "
                   f"min_steps={args.min_steps:,}, max_steps={stage['max_steps']:,}\n"
@@ -239,16 +264,41 @@ def main():
             # v29 분석으로 모든 seed가 s3d 800~900k peak 후 1M까지 후퇴 확인 →
             # 학습 끝 model.zip만으로는 진짜 best를 보존 못 함. peak 시점을
             # model_best.zip로 별도 저장 (학습 끝 model.zip은 그대로 유지).
+            # v26: deterministic check용 env factory (Monitor 안 씌운 raw env).
+            #   stochastic 90% trigger 시 det eval로 진짜 90% 확인 → false positive 차단.
+            def _det_env_builder(_theta_range=theta_range, _sr=stage["success_radius"],
+                                 _ep=ep_sec, _N=ACTION_HISTORY_N):
+                return FishSwimEnv(
+                    target_theta_range=_theta_range,
+                    success_radius=_sr,
+                    episode_seconds=_ep,
+                    action_history_n=_N,
+                )
             callbacks.append(CurriculumStopCallback(
                 threshold=args.threshold, window=100,
                 check_every=5000, min_steps=args.min_steps,
                 best_save_path=run_dir / "model_best",
+                det_env_fn=_det_env_builder if args.det_check else None,
+                det_episodes=args.det_episodes,
+                det_cooldown_steps=args.det_cooldown_steps,
             ))
             # v10: stage별 차등 floor. 작은 회전(s3a/b 0.002~0.003)은 정확도, 큰 회전(s3c 0.005,
             # s3d 0.006)은 비대칭 ctrl 패턴 발견 위해 entropy 유지. v8 0.005·v9 0.002 모두
             # 한쪽만 만족했던 결과의 종합.
-            callbacks.append(EntCoefFloorCallback(floor=stage["ent_floor"]))
-            print(f"[curriculum] ent_floor = {stage['ent_floor']}")
+            # v25-A: stage["ent_floor_end"] 있으면 linear decay schedule.
+            #   decay 구간 = 0 ~ max_steps. 학습 후반 deterministic policy 완성용.
+            ent_floor_end = stage.get("ent_floor_end")
+            decay_end = stage["max_steps"] if ent_floor_end is not None else 0
+            callbacks.append(EntCoefFloorCallback(
+                floor=stage["ent_floor"],
+                floor_end=ent_floor_end,
+                decay_end_step=decay_end,
+            ))
+            if ent_floor_end is not None:
+                print(f"[curriculum] ent_floor schedule: {stage['ent_floor']} → "
+                      f"{ent_floor_end} (linear, 0~{decay_end:,} step)")
+            else:
+                print(f"[curriculum] ent_floor = {stage['ent_floor']}")
             cb = CallbackList(callbacks) if callbacks else None
 
             model.learn(

@@ -145,27 +145,207 @@ s3b `max_steps` 250k → **1M**. 다른 변수 v21 그대로 (N=20·ent_floor �
 
 → **누적 진행**: v21에서 s3b 69%로 강제 진행이 천장처럼 보였으나, 학습량만 늘려도 90% 졸업. **단계 졸업의 본질적 병목 = 학습량**, 카드 변경 전에 학습량부터 충분히 줘야 한다는 교훈.
 
+### v22 후속 진단 — TB false positive 발견 (함정 #13) ⚠
+
+v22 졸업 직후 `eval_stages.py` (사용자 후속 요청으로 새로 작성, 100 ep deterministic) 6 stage 측정 결과:
+
+| Stage | v22 TB end | v22 deterministic |
+|---|---|---|
+| s1·s2·s3a | 100% | **100%** |
+| **s3b** | **90% (peak 91%)** | **79%** ⚠ |
+| s3c | 37% (peak 50%) | 42% |
+| s3d | 32% (peak 50%) | 26% |
+
+**v22 s3b "90% 졸업"이 false positive**. 원인 두 갈래:
+
+- (a) `CurriculumStopCallback`이 TB stochastic 91% 시점에 trigger (마지막 100 measurement mean 85.9%, min 79%, max 91% — 4 측정점 정점 시점 운).
+- (b) **stochastic-deterministic gap 12%p**: SAC random action의 entropy 기여가 정책 효과의 일부를 담당 → deterministic eval (mean action만)에서 약함.
+
+**대응**:
+- CLAUDE.md 함정 #13 추가 (TB 졸업 신호 false positive).
+- 졸업 확정은 항상 `eval_stages.py` deterministic eval. TB는 학습 중 신호일 뿐.
+- 다음 카드(v25-A, v26-A)는 이 gap을 직접 공격하는 방향.
+
+### v25-A (ent_floor schedule — stochastic-det gap 12%p → 8%p)
+
+**카드**: s3b `ent_floor 0.003 → 0` linear decay (0~1M step). 가설: 학습 후반에 `log_ent_coef`를 0으로 압박해 정책의 stochasticity를 점점 줄이면, 학습 종료 시점에 deterministic action ≈ stochastic action 수렴. 즉 stochastic-det gap을 학습 메커니즘으로 직접 좁힘. 다른 변수 v22 그대로.
+
+**결과**:
+
+| Stage | v22 det | v25-A det | Δ |
+|---|---|---|---|
+| s1·s2 | 100/100 | 100/100 | 0/0 |
+| s3a | 100 | 98 | −2 (noise) |
+| **s3b** | **79** | **84** | **+5** ⭐ (gap 12%p → 8%p) |
+| s3c | 42 | 43 | +1 |
+| s3d | 26 | 30 | +4 |
+
+- 615k step에서 TB callback 92% trigger 조기 종료. final ≡ best (모델 동일).
+- ✓ **가설 부분 성공**: gap 좁혀짐 (TB 92% → det 84%, gap 8%p), 방향성 옳음.
+- ❌ **90% 미달**: schedule만으로 부족. v26-A에서 det check + 학습량 추가로 검증 시도.
+- forgetting 없음 (s1·s2·s3a 100/100/98).
+
+### v26-A (det check + 학습량 1M 추가 — 카드 천장 입증) ❌
+
+**카드**: v25-A 카드 그대로 + (1) train.py `CurriculumStopCallback`에 `det_env_fn` 추가 — TB 90% trigger 후 deterministic eval 50 ep 자동 실행, det < 90%면 cooldown 100k step 후 재평가. (2) v25-A 모델을 init으로 추가 1M 학습. 가설: v25-A가 615k에서 stochastic 92% trigger로 조기 종료된 것이 한계라면, det check + 학습량 추가로 진짜 det 90% 도달 가능.
+
+**det check trigger 기록** (학습 중):
+
+```
+trigger 1 (step ~180k): TB 92% → det 82% (41/50) ✗ — cooldown until 280k
+trigger 2 (step ~880k): TB 90% → det 72% (36/50) ✗ — cooldown until 980k (후퇴)
+trigger 3 (step 1000k): TB 90% → det 82% (41/50) ✗ — cooldown until 1100k
+```
+
+1M 완주, det 모든 시점 미달 → 진짜 조기 종료 안 됨.
+
+**6 stage deterministic eval 결과**:
+
+| Stage | v22 | v25-A | **v26-A final** | v26-A best |
+|---|---|---|---|---|
+| s1·s2·s3a | 100/100/100 | 100/100/98 | **100/100/100** | 100/100/100 |
+| **s3b** | **79** | **84** ⭐ | **80** ↓ | **71** ↓↓ |
+| s3c | 42 | 43 | 42 | 38 |
+| s3d | 26 | 30 | 28 | 25 |
+
+- **best (TB peak)가 final보다 더 나쁨** (71% < 80%): best는 TB stochastic 92% peak 시점에 저장 → 그 시점 det는 71%. TB-det gap이 학습 중 21%p까지 벌어진 사례.
+- v22 79% → v25-A 84% → v26-A 80% — **s3b det 80~84% 진동**. 학습량 1M 추가로 정책 안정화 ❌.
+
+**핵심 통찰**:
+
+- ❌ **카드 자체 천장 입증**: 현 카드(yaw `|·|`0.005·N=20·ent_floor schedule)의 s3b 본질적 천장 ~80~84%. 학습량/ent_floor/det check 모두 깨지 못함.
+- ⚠ **best 모델의 함정**: TB stochastic peak가 deterministic 기준 최악일 수 있음. 함정 #13 + best metric 의존성 둘 다 문제.
+- 단일 축 카드(ent_floor/det check)는 함정 #9 (v12~v16 단일 축 카드 한계) 패턴 재현. **새 축 필요** (reward 방향성 / N / multi-seed).
+
+→ **누적 진행**: v22 졸업이 false positive였고, v25-A·v26-A 두 카드(schedule + det check)로도 s3b 80~84% 천장 못 깸. v22~v26 4개 카드의 단일 seed 결과인 만큼, 다음 카드는 **multi-seed**로 분산 확인 또는 새 reward 축(yaw sign-aware 등) 시도.
+
+### v27 (v25-A × 3 seed — s3b 졸업 본격 확정, 카드 천장 가설 reject) ⭐⭐⭐
+
+**카드**: v25-A 카드 그대로 (ent_floor `0.003 → 0` linear decay, yaw `|·|`·0.005·N=20). init = v25-A 모델 (`sim/runs/v25/s3b_arc30/model.zip`), `--start-stage 4 --end-stage 4` (s3b만), `--det-check` 활성, seed=0/1/2 3 run. 명령:
+
+```bash
+python3 sim/curriculum.py --start-stage 4 --end-stage 4 --no-viewer --det-check \
+  --seed N --tb-tag model3_v27_seedN --runs-subdir v27_seedN \
+  --init-from sim/runs/v25/s3b_arc30/model.zip
+```
+
+**가설**: v22 79% / v25-A 84% / v26-A 80% — single seed 결과로 "현 카드 본질 천장 80~84%" 결론. multi-seed로 분리:
+- 가설 1 (카드 한계): 3 seed 모두 78~85% 수렴 → 진짜 천장 → 새 reward 축 (yaw sign-aware / N) 필요.
+- 가설 2 (seed 분산): 70~92% 분산 → multi-seed가 정착 방법론, best seed 90%+ 가능.
+- 가설 3 (카드 valid): 모두 90%+ → v22~v26 single seed 결과는 lower outlier들이었음.
+
+**결과 — 가설 3 입증 ⭐⭐⭐**:
+
+| seed | 졸업 step | TB stochastic | **det eval** | 학습 시간 | 패턴 |
+|---|---|---|---|---|---|
+| 0 | 705k | 90% | **90.0%** (45/50) | 82분 | 218k에서 TB peak 94% → 후퇴 → 705k에서 진짜 졸업 |
+| 1 | 880k | 91% | **92.0%** (46/50) | 92분 | 547k부터 안정 80~88% → 880k에서 trigger |
+| 2 | 245k | 94% | **90.0%** (45/50) | 36분 | **145k에서 TB 90% false positive 차단** (det 84%) → cooldown 후 245k 진짜 졸업 |
+| **mean** | 610k | 91.7% | **90.7% ± 1.2%** | 70분 | — |
+
+- ⭐⭐⭐ **3 seed 모두 det 90%+ — s3b 졸업 본격 확정**.
+- v22~v26 (single seed 79~84%)는 lower outlier들이었음. **카드(v25-A ent_floor schedule + yaw `|·|`·0.005·N=20·1M)는 valid**.
+- 졸업 step 245k~880k (×3.6 분산) — seed에 따라 학습 속도 큰 차이. max_steps는 충분히 길게(1M+) 잡아야.
+
+**v27 seed2 함정 #13 실증** (det check 효과):
+
+```
+step 145k: TB stochastic 90% (best 갱신) → det eval 12/50 = 84% ❌ false positive
+          → 학습 계속, cooldown until 245k
+step 245k: TB stochastic 94% → det eval 45/50 = 90% ✓ 진짜 졸업
+```
+
+det check 없었다면 145k에서 잘못 졸업 (v22 패턴 재발). **`--det-check` 인프라 효과 본격 입증** — 새 학습은 default 활성 권장.
+
+**핵심 통찰 (메타)**:
+
+1. **single seed로 카드 평가 절대 금지** — s3d_90 라인에서 발견된 교훈이 main flow에도 동일하게 적용. v22~v26 4개 카드 single seed 결과(79/84/80)는 모두 같은 카드의 lower tail이었음.
+2. **s3b 졸업의 본질** = ent_floor schedule (stochastic-det gap 좁힘) + 충분 학습량(1M) + multi-seed + det check.
+3. **카드 평가 표준 = multi-seed × deterministic eval × det check + 6 stage forgetting 점검** (4가지 모두 필수).
+
+**미해결 (다음 작업)**:
+
+- ⚠ **6 stage deterministic eval 미실시** — v27 best 모델 3 seed (특히 seed1 92%) 각각 `eval_stages.py` 실행 필요. s1·s2·s3a forgetting 여부 확인 후 다음 카드 (s3c) 진행.
+
+→ **누적 진행**: v22~v26 4개 카드의 single seed 결론(s3b 천장 80~84%) 정정. **s3b는 v25-A 카드 + multi-seed로 50 ep 졸업 임계 통과 (det 90.7%)**. 단 Step 0 후속 100 ep eval에서 sample noise 발견 — 후속 진단 참조.
+
+### Step 0 (v27 후속 — 100 ep eval로 sample noise 발견) ⚠
+
+**작업**: v27 best 모델 3 seed (seed1 det 92% best, seed0 90%, seed2 90%) 각각 `eval_stages.py` 100 ep로 6 stage 측정 — catastrophic forgetting 점검 + 졸업 진짜 확정.
+
+**6 stage deterministic eval 결과 (100 ep × 3 seed)**:
+
+| Stage | seed1 | seed0 | seed2 | mean |
+|---|---|---|---|---|
+| s1_forward | 100% | 100% | 100% | 100% ✓ |
+| s2_anchor | 100% | 100% | 100% | 100% ✓ |
+| s3a_arc15 | 100% | 100% | 100% | 100% ✓ |
+| **s3b_arc30** | **90%** | **81%** | **86%** | **85.7% ± 3.7%p** ⚠ |
+| s3c_arc60 | 43% | 44% | 45% | 44.0% |
+| s3d_arc90 | 32% | 29% | 31% | 30.7% |
+
+**핵심 발견**:
+
+1. ✅ **catastrophic forgetting 없음** — 3 seed 모두 s1·s2·s3a 100/100/100%. s3b fine-tune이 이전 stage 망가뜨리지 않음. mixed sampling/rehearsal 새 축 카드 불필요.
+
+2. ⚠ **50 ep det 졸업 측정 vs 100 ep eval 5%p gap**:
+   - 학습 졸업 시 50 ep det: 90 / 92 / 90% (mean 90.7%)
+   - Step 0 100 ep eval: 90 / 81 / 86% (mean **85.7%**)
+   - seed1만 정확히 90%, seed0는 −9%p 빠짐, seed2는 −4%p
+   - **50 ep는 sample noise로 운 좋은 측정** — 100 ep로 분산 평균화하면 진짜 분포가 낮음
+
+3. s3c·s3d는 v22~v26-A 측정값(42·28%)과 거의 동일 — v27이 s3b만 fine-tune이라 다른 stage는 init(v25-A)에서 변경 없음.
+
+**메타-결론**: 
+
+- **졸업 확정 표준 = 100 ep `eval_stages.py`**. 50 ep det check은 학습 trigger엔 적합하나 졸업 확정 측정으론 부족.
+- **`--det-episodes` 50 → 100으로 강화 필요** (함정 #16, CLAUDE.md 갱신).
+- v27 결론 "s3b 졸업 본격 확정"은 "50 ep 임계 통과 but 100 ep 기준 85.7% 부족"으로 정정.
+
+**다음 카드**: **v28 (s3b 안정화, --det-episodes 100)** — 학습 중 100 ep det check로 진짜 90% 도달까지 학습 지속.
 
 ## 다음 카드 후보 상세
 
-**현재 우선순위 = s3c 90% 달성** (main flow에서 가장 낮은 미달 stage). 카드 평가는 항상 "가장 낮은 미달 stage" 위에서 — s3d 카드는 s3c 졸업 후에야 본질적 의미.
+**현재 우선순위 = s3b 안정화** (Step 0 100 ep eval로 mean 85.7% 미달 발견, 50 ep 졸업 측정 90.7%과 5%p gap). forgetting 없음 ✓.
 
-### 우선순위 1: s3c (현 미달, v22 단일 seed 37%)
+### 우선순위 1: v28 — s3b 안정화 (`--det-episodes 100`)
 
-1. **새 v23 — s3c 본격 학습** ⭐⭐⭐ — `s3c max_steps 350k → 1M` + v22 s3b 졸업 정책 이어받기 (`--start-stage 5`) + 1 seed. v22가 s3b에서 입증한 학습량 부족 가설을 s3c에 그대로 적용. ~55분.
-   - 가설: v22까지 s3c max_steps 350k가 짧았던 것. 1M 주면 s3b와 같이 90%+ 가능?
-   - 90% 달성 → 다음 s3d 카드
-   - 천장 50~70% → s3c 카드 한계로 입증, 새 v24~ 카드 (yaw reward 강화 / ent_floor / N 조정)
-2. **새 v24~ — s3c 카드 한계 입증 시** — yaw reward 강화 / ent_floor / N 조정 등 s3c 위주 매핑.
+1. **v28 — s3b 안정화** ⭐⭐⭐
+   - init: v25-A 모델 (`sim/runs/v25/s3b_arc30/model.zip`) — v27과 깨끗한 비교
+   - 카드 (ent_floor schedule, yaw `|·|`·0.005, N=20, NN [256,256]): v25-A 그대로
+   - **본질 변경**: `--det-episodes 50 → 100` ⭐
+   - `--det-check` 활성, s3b max_steps 1M
+   - seed 0/1/2 multi-seed
+   - 학습 후 `eval_stages.py` × 3 seed 100 ep 필수
+   - 예상 시간: ~6시간 (sequential) 또는 ~2시간 (병렬)
+   - 가설 1: 학습 중 100 ep 검증으로 진짜 90%까지 학습 지속 → mean 90~92% 달성
+   - 가설 2: 1M 안 100 ep 90% 도달 불가 → 카드 진짜 천장 86~89%, 새 축 필요
 
-### 우선순위 2: s3c 졸업 후 s3d (v22 32%, peak 50%)
+### 우선순위 2: v28 결과 따라 다음 카드
 
-3. **s3d 본격 학습** — max_steps 500k → 1M (이미 v22에서 1M 돌렸지만 s3c 90% 졸업 정책에서 시작하면 다시 평가 필요). 과거 s3d 카드 분석 [`docs/s3d_90_line.md`](s3d_90_line.md) 참조 (s3b·s3c 미달 상태 부수적 정보).
+| v28 결과 | 판정 → 다음 카드 |
+|---|---|
+| 100 ep mean ≥ 90% | ✓ s3b 졸업 확정 → v29 s3c |
+| 86~89% | ⚠ 카드 한계 → 새 축 (yaw sign-aware / N 변경 / progress 강화) |
+| < 86% | ❌ 후퇴 → 카드 변경 |
+
+### 우선순위 3: s3c·s3d (s3b 100 ep 졸업 후)
+
+v29 — s3c 1M + det-episodes 100 + multi-seed. v30 — s3d 같은 방법론.
+
+### 새 축 카드 (현재 필요 없음 — v27이 reject)
+
+v22~v26 single seed 결과로 "s3b 천장 80~84%" 결론에 기반한 새 축 후보들 (yaw sign-aware / N 변경 / progress 가중치 등)은 v27 multi-seed로 카드 valid 입증되어 **현재 진행 불필요**. s3c·s3d에서 카드 한계 입증되면 그때 검토.
 
 ### s3 외 인프라/메타 카드 (낮은 우선순위)
 
-4. **학습 후반 안정화** — ent_floor 후반 ↓ / LR decay / max_steps ↓. catastrophic drift 자체 늦추는 축. best metric ≈ end metric 목표. s3b·c·d 공통 적용 가능.
-5. **HER (Hindsight Experience Replay)** — env Dict obs 큰 변경. 강력하나 구현 비용 큼.
-6. **N=24 + yaw `|·|`·0.005 multi-seed** — v17 표현력 + v21 catalysis. N 변경은 s1부터 새 학습 (함정 #8, ~9시간).
-7. **fin actuator 추가** — 단일 모터 한계 자체를 풂. (사용자 명시 제외)
-8. **ANN surrogate (Lighthill / Zhong)** — fluid model 한계 우회. 실물 motion capture 필요.
+2. **HER (Hindsight Experience Replay)** — env Dict obs 큰 변경. 강력하나 구현 비용 큼.
+3. **fin actuator 추가** — 단일 모터 한계 자체를 풂. (사용자 명시 제외)
+4. **ANN surrogate (Lighthill / Zhong)** — fluid model 한계 우회. 실물 motion capture 필요.
+
+### v22~v27 인프라 추가 사항 (정착됨)
+
+- **train.py `CurriculumStopCallback.det_env_fn`** (`--det-check`, `--det-episodes`, `--det-cooldown-steps`) — TB 90% trigger 후 deterministic eval 자동 검증. 함정 #13 차단. v27 seed2에서 효과 실증. **default 활성 권장**.
+- **curriculum.py `--init-from`** — start-stage init 모델 path 명시. v26-A에서 추가.
+- **curriculum.py `--seed --tb-tag --runs-subdir --end-stage`** — multi-seed + single stage 학습 인프라. v27에서 활용.
+- **eval_stages.py** — 모델 1개 6 stage deterministic eval (~20분 CPU). 졸업 확정·forgetting 점검 필수.

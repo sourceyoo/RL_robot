@@ -178,7 +178,7 @@ class FishSwimEnv(gym.Env):
         # 가 sweet spot. v26 reproduce로 v22 32% baseline은 seed 운 입증 (end 26%,
         # v22~v26 평균 ~29% / ±6%p 분산).
         # v29: v22 카드 그대로 multi-seed (3 seed) 평가 — baseline 신뢰도 본격 확립.
-        # yaw reward = +YAW_W·|yaw_rate| (v22 그대로).
+        # yaw reward = +YAW_W·|yaw_rate| (v22 그대로, v25-A: 0.007 → 0.005 복귀).
         YAW_W = 0.005
         yaw_rate = float(self.data.qvel[IDX_YAW])
         reward = (

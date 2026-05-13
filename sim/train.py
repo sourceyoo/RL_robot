@@ -72,6 +72,8 @@ class CurriculumStopCallback(BaseCallback):
     def __init__(self, threshold: float = 0.9, window: int = 100,
                  check_every: int = 5000, min_steps: int = 30_000,
                  dt: float = 0.02, best_save_path: "Path | None" = None,
+                 det_env_fn=None, det_episodes: int = 50,
+                 det_cooldown_steps: int = 100_000,
                  verbose: int = 1):
         super().__init__(verbose)
         self.threshold = threshold
@@ -90,6 +92,18 @@ class CurriculumStopCallback(BaseCallback):
         self.best_save_path = best_save_path
         self.best_rate = -1.0
         self.best_step = 0
+        # v26: deterministic check 인프라.
+        # v22/v25-A 모두 TB stochastic 91~92% trigger되었으나 deterministic은 79~84%.
+        # SAC stochastic action은 진동 정점에서 false positive 가능 (함정 #13).
+        # det_env_fn 주어지면 stochastic trigger 후 deterministic eval로 진짜 90% 확인.
+        # 미달 시 stop 안 함, det_cooldown_steps 학습 후 재평가.
+        self.det_env_fn = det_env_fn
+        self.det_episodes = det_episodes
+        self.det_cooldown_steps = det_cooldown_steps
+        self._det_env = None
+        self._det_cooldown_until = 0
+        self.det_best_rate = -1.0
+        self.det_best_step = 0
 
     def _on_step(self) -> bool:
         infos = self.locals.get("infos", [])
@@ -142,10 +156,52 @@ class CurriculumStopCallback(BaseCallback):
 
                 # 조기 종료 (threshold > 0일 때만)
                 if self.threshold > 0 and rate >= self.threshold:
-                    print(f"[curriculum] ✓ reach_rate {rate:.1%} >= {self.threshold:.0%} "
-                          f"— 학습 조기 종료 (다음 단계로)")
-                    return False
+                    # v26: det_env_fn 있으면 deterministic eval로 진짜 확인.
+                    if self.det_env_fn is not None:
+                        if self.num_timesteps < self._det_cooldown_until:
+                            # cooldown 중 — det check skip, 학습 계속
+                            return True
+                        det_rate = self._run_det_eval()
+                        # det best 추적 (재평가 시 최고 기록)
+                        if det_rate > self.det_best_rate:
+                            self.det_best_rate = det_rate
+                            self.det_best_step = self.num_timesteps
+                        if det_rate >= self.threshold:
+                            print(f"[curriculum] ✓ det reach_rate {det_rate:.1%} "
+                                  f">= {self.threshold:.0%} — 학습 진짜 조기 종료")
+                            return False
+                        else:
+                            self._det_cooldown_until = self.num_timesteps + self.det_cooldown_steps
+                            print(f"[curriculum] ✗ det reach_rate {det_rate:.1%} "
+                                  f"< {self.threshold:.0%} (TB stochastic {rate:.1%}) "
+                                  f"— 학습 계속, cooldown until step {self._det_cooldown_until:,}")
+                    else:
+                        # 기존 동작 (legacy): TB stochastic만으로 stop
+                        print(f"[curriculum] ✓ reach_rate {rate:.1%} >= {self.threshold:.0%} "
+                              f"— 학습 조기 종료 (다음 단계로)")
+                        return False
         return True
+
+    def _run_det_eval(self) -> float:
+        """현 정책으로 deterministic eval N ep — reach_rate 반환."""
+        if self._det_env is None:
+            self._det_env = self.det_env_fn()
+        import time as _t
+        t0 = _t.time()
+        reached = 0
+        for ep in range(self.det_episodes):
+            obs, _ = self._det_env.reset(seed=42 + ep)
+            done = False
+            while not done:
+                action, _ = self.model.predict(obs, deterministic=True)
+                obs, _r, term, trunc, info = self._det_env.step(action)
+                done = bool(term or trunc)
+            if info.get("reached", False):
+                reached += 1
+        rate = reached / self.det_episodes
+        print(f"[curriculum] det eval: {reached}/{self.det_episodes} = "
+              f"{rate:.1%} (소요 {_t.time()-t0:.1f}s)")
+        return rate
 
 
 class EntCoefFloorCallback(BaseCallback):
@@ -155,21 +211,48 @@ class EntCoefFloorCallback(BaseCallback):
     수렴이 빠르면 0.001 미만으로 collapse → 탐색 사망 → 새 mode 발견 불가.
     이 callback은 매 step `log_ent_coef.data`를 floor 의 log로 clamp (forward만,
     optimizer는 그대로 움직이지만 다음 step 전에 다시 clamp).
+
+    v25-A: floor schedule 지원. floor_end가 주어지면 0~decay_end_step 동안
+    linear decay (start_floor → floor_end). 학습 후반 deterministic policy 완성용.
     """
 
-    def __init__(self, floor: float = 0.02, verbose: int = 0):
+    def __init__(self, floor: float = 0.02,
+                 floor_end: float | None = None,
+                 decay_end_step: int = 0,
+                 verbose: int = 0):
         super().__init__(verbose)
-        self.floor = floor
+        self.start_floor = floor
+        self.floor_end = floor_end
+        self.decay_end_step = decay_end_step
         import math as _m
-        self._log_floor = float(_m.log(floor))
+        self._log_start = float(_m.log(floor))
+        # floor_end가 0이면 clamp 자체를 끈다 (log(0) = -inf).
+        self._log_end = float(_m.log(max(floor_end, 1e-12))) if floor_end is not None else self._log_start
+
+    def _current_log_floor(self) -> float | None:
+        if self.floor_end is None or self.decay_end_step <= 0:
+            return self._log_start
+        step = int(self.num_timesteps)
+        if step <= 0:
+            return self._log_start
+        if step >= self.decay_end_step:
+            # floor_end == 0 → clamp 완전 해제
+            return None if (self.floor_end is not None and self.floor_end <= 0) else self._log_end
+        t = step / self.decay_end_step
+        # linear interpolation in log-space (entropy 자연 단위는 log)
+        return self._log_start + t * (self._log_end - self._log_start)
 
     def _on_step(self) -> bool:
         log_a = getattr(self.model, "log_ent_coef", None)
-        if log_a is not None:
-            import torch
-            with torch.no_grad():
-                if log_a.item() < self._log_floor:
-                    log_a.data.fill_(self._log_floor)
+        if log_a is None:
+            return True
+        log_floor = self._current_log_floor()
+        if log_floor is None:
+            return True
+        import torch
+        with torch.no_grad():
+            if log_a.item() < log_floor:
+                log_a.data.fill_(log_floor)
         return True
 
 
@@ -328,9 +411,22 @@ def main():
                    help="reach_rate 체크 주기 step")
     p.add_argument("--ent-floor", type=float, default=0.0,
                    help="EntCoefFloorCallback floor (0이면 비활성). v10에서 stage별 차등.")
+    p.add_argument("--ent-floor-end", type=float, default=None,
+                   help="v25-A: floor linear decay 종료 값 (0이면 학습 후반 clamp 해제). "
+                        "None이면 schedule 비활성, --ent-floor 값으로 고정 floor.")
+    p.add_argument("--ent-floor-decay-end-step", type=int, default=0,
+                   help="v25-A: floor decay가 ent-floor-end에 도달하는 step "
+                        "(0~이 step 동안 linear). 보통 --steps와 동일.")
     p.add_argument("--save-best", action="store_true",
                    help="reach_rate max 갱신 시 model_best.zip 별도 저장 (v30~). "
                         "v29 분석으로 후반 catastrophic forgetting 발견 → peak 모델 보존용.")
+    p.add_argument("--det-check", action="store_true",
+                   help="v26: TB stochastic threshold trigger 후 deterministic eval로 진짜 90% 확인. "
+                        "함정 #13 (TB false positive) 해결.")
+    p.add_argument("--det-episodes", type=int, default=50,
+                   help="v26: deterministic eval 시 ep 수 (기본 50). 비용 ~4분/회 (fps 305).")
+    p.add_argument("--det-cooldown-steps", type=int, default=100_000,
+                   help="v26: det eval 실패 시 다음 평가까지 학습 step (기본 100k).")
     args = p.parse_args()
 
     run_dir = Path(__file__).parent / "runs" / args.tag
@@ -378,12 +474,22 @@ def main():
     # CurriculumStopCallback은 조기 종료 또는 best 저장 둘 중 하나라도 켜져 있으면 추가.
     # (이 콜백이 reach_rate·align·final_dist TB 메트릭도 기록.)
     best_save_path = (run_dir / "model_best") if args.save_best else None
+    # v26: train.py 단독 사용 시도 deterministic check 활성 (det_env_fn = make_env 자체).
+    # Monitor 안 씌운 raw FishSwimEnv가 필요해서 별도 builder.
+    def _det_env_builder():
+        return FishSwimEnv(
+            target_theta_range=theta_range,
+            success_radius=args.success_radius,
+        )
     if args.success_threshold > 0 or args.save_best:
         callbacks.append(CurriculumStopCallback(
             threshold=args.success_threshold,
             window=args.eval_window,
             check_every=args.check_every,
             best_save_path=best_save_path,
+            det_env_fn=_det_env_builder if args.det_check else None,
+            det_episodes=args.det_episodes,
+            det_cooldown_steps=args.det_cooldown_steps,
         ))
         if args.success_threshold > 0:
             print(f"[train] curriculum: reach_rate ≥ {args.success_threshold:.0%}이면 조기 종료")
@@ -391,8 +497,16 @@ def main():
             print(f"[train] best-model: reach_rate max 갱신 시 {best_save_path}.zip 저장")
 
     if args.ent_floor > 0:
-        callbacks.append(EntCoefFloorCallback(floor=args.ent_floor))
-        print(f"[train] ent_coef floor = {args.ent_floor}")
+        callbacks.append(EntCoefFloorCallback(
+            floor=args.ent_floor,
+            floor_end=args.ent_floor_end,
+            decay_end_step=args.ent_floor_decay_end_step,
+        ))
+        if args.ent_floor_end is not None and args.ent_floor_decay_end_step > 0:
+            print(f"[train] ent_coef floor schedule: {args.ent_floor} → "
+                  f"{args.ent_floor_end} (linear, 0~{args.ent_floor_decay_end_step:,} step)")
+        else:
+            print(f"[train] ent_coef floor = {args.ent_floor}")
 
     cb = CallbackList(callbacks) if callbacks else None
 
