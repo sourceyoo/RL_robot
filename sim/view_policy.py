@@ -30,11 +30,11 @@ ROOT = Path(__file__).parent
 
 
 def infer_action_history_n(sac_model) -> int:
-    """SAC 모델의 obs_space dim에서 action_history_n 추론. obs dim = 11 + N."""
+    """SAC 모델의 obs_space dim에서 action_history_n 추론. obs dim = 13 + N (v32-C+)."""
     obs_dim = sac_model.observation_space.shape[0]
-    n = obs_dim - 11
+    n = obs_dim - 13
     if n < 0:
-        raise RuntimeError(f"비호환 모델: obs_dim={obs_dim} (11 미만)")
+        raise RuntimeError(f"비호환 모델: obs_dim={obs_dim} (13 미만)")
     return n
 
 
@@ -91,6 +91,8 @@ def main():
         ep_count = 1
         ep_reached_count = 0
         last_print = time.time()
+        tail_buf: list[float] = []
+        fin_buf: list[float] = []
 
         while viewer.is_running():
             sim_start = time.time()
@@ -105,12 +107,19 @@ def main():
             obs, r, terminated, truncated, info = env.step(action)
             ep_reward += r
             step += 1
+            tail_buf.append(float(data.qpos[3]))  # IDX_TAIL=3
+            fin_buf.append(float(data.qpos[4]))   # IDX_FIN=4
 
             viewer.sync()
 
             if time.time() - last_print > 1.0:
+                tail_amp = float(np.degrees(max(tail_buf) - min(tail_buf))) if tail_buf else 0.0
+                fin_amp = float(np.degrees(max(fin_buf) - min(fin_buf))) if fin_buf else 0.0
                 print(f"  [ep{ep_count}] step={step}  dist={info['distance']:.3f}  "
-                      f"align={info['align']:+.2f}  reward={ep_reward:.2f}")
+                      f"align={info['align']:+.2f}  tail_amp={tail_amp:.1f}°  fin_amp={fin_amp:.1f}°  "
+                      f"reward={ep_reward:.2f}")
+                tail_buf.clear()
+                fin_buf.clear()
                 last_print = time.time()
 
             if terminated or truncated:
@@ -123,6 +132,8 @@ def main():
                 ep_reward = 0.0
                 step = 0
                 ep_count += 1
+                tail_buf.clear()
+                fin_buf.clear()
 
             elapsed = time.time() - sim_start
             if elapsed < env.dt:

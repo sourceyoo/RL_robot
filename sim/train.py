@@ -86,17 +86,13 @@ class CurriculumStopCallback(BaseCallback):
         self.recent_lengths: collections.deque = collections.deque(maxlen=window)
         self.recent_aligns: collections.deque = collections.deque(maxlen=window)
         self.last_check = 0
-        # v30 best-model checkpoint: reach_rate max 갱신 시 별도 저장.
-        # v29 분석으로 800~900k peak 후 1M까지 catastrophic forgetting 확인 (3 seed).
-        # best_save_path가 None이면 비활성. 활성 시 학습 끝 model.zip과 공존.
+        # reach_rate max 갱신 시 별도 저장. None이면 비활성. 학습 끝 model.zip과 공존.
+        # (후반 catastrophic forgetting 대비 — peak 시점 정책 보존.)
         self.best_save_path = best_save_path
         self.best_rate = -1.0
         self.best_step = 0
-        # v26: deterministic check 인프라.
-        # v22/v25-A 모두 TB stochastic 91~92% trigger되었으나 deterministic은 79~84%.
-        # SAC stochastic action은 진동 정점에서 false positive 가능 (함정 #13).
-        # det_env_fn 주어지면 stochastic trigger 후 deterministic eval로 진짜 90% 확인.
-        # 미달 시 stop 안 함, det_cooldown_steps 학습 후 재평가.
+        # deterministic check 인프라 (함정 #13 차단).
+        # stochastic 90% trigger → det eval로 진짜 확인 → 미달 시 cooldown 후 재평가.
         self.det_env_fn = det_env_fn
         self.det_episodes = det_episodes
         self.det_cooldown_steps = det_cooldown_steps
@@ -156,7 +152,7 @@ class CurriculumStopCallback(BaseCallback):
 
                 # 조기 종료 (threshold > 0일 때만)
                 if self.threshold > 0 and rate >= self.threshold:
-                    # v26: det_env_fn 있으면 deterministic eval로 진짜 확인.
+                    # det_env_fn 있으면 deterministic eval로 진짜 확인 (함정 #13).
                     if self.det_env_fn is not None:
                         if self.num_timesteps < self._det_cooldown_until:
                             # cooldown 중 — det check skip, 학습 계속
@@ -212,8 +208,8 @@ class EntCoefFloorCallback(BaseCallback):
     이 callback은 매 step `log_ent_coef.data`를 floor 의 log로 clamp (forward만,
     optimizer는 그대로 움직이지만 다음 step 전에 다시 clamp).
 
-    v25-A: floor schedule 지원. floor_end가 주어지면 0~decay_end_step 동안
-    linear decay (start_floor → floor_end). 학습 후반 deterministic policy 완성용.
+    floor schedule 지원: floor_end 주어지면 0~decay_end_step 동안 linear decay
+    (start_floor → floor_end). 학습 후반 deterministic policy 수렴용.
     """
 
     def __init__(self, floor: float = 0.02,
@@ -410,23 +406,20 @@ def main():
     p.add_argument("--check-every", type=int, default=5000,
                    help="reach_rate 체크 주기 step")
     p.add_argument("--ent-floor", type=float, default=0.0,
-                   help="EntCoefFloorCallback floor (0이면 비활성). v10에서 stage별 차등.")
+                   help="EntCoefFloorCallback floor (0이면 비활성).")
     p.add_argument("--ent-floor-end", type=float, default=None,
-                   help="v25-A: floor linear decay 종료 값 (0이면 학습 후반 clamp 해제). "
+                   help="floor linear decay 종료 값 (0이면 학습 후반 clamp 해제). "
                         "None이면 schedule 비활성, --ent-floor 값으로 고정 floor.")
     p.add_argument("--ent-floor-decay-end-step", type=int, default=0,
-                   help="v25-A: floor decay가 ent-floor-end에 도달하는 step "
-                        "(0~이 step 동안 linear). 보통 --steps와 동일.")
+                   help="floor decay가 ent-floor-end에 도달하는 step (0~이 step 동안 linear).")
     p.add_argument("--save-best", action="store_true",
-                   help="reach_rate max 갱신 시 model_best.zip 별도 저장 (v30~). "
+                   help="reach_rate max 갱신 시 model_best.zip 별도 저장. "
                         "v29 분석으로 후반 catastrophic forgetting 발견 → peak 모델 보존용.")
-    p.add_argument("--det-check", action="store_true",
-                   help="v26: TB stochastic threshold trigger 후 deterministic eval로 진짜 90% 확인. "
-                        "함정 #13 (TB false positive) 해결.")
-    p.add_argument("--det-episodes", type=int, default=50,
-                   help="v26: deterministic eval 시 ep 수 (기본 50). 비용 ~4분/회 (fps 305).")
+    p.add_argument("--det-episodes", type=int, default=100,
+                   help="stage 졸업 deterministic eval ep 수 (기본 100, eval_stages.py와 통일). "
+                        "TB stochastic threshold trigger 후 이 ep 수로 진짜 통과 확인. 비용 ~8분/회 (fps 305).")
     p.add_argument("--det-cooldown-steps", type=int, default=100_000,
-                   help="v26: det eval 실패 시 다음 평가까지 학습 step (기본 100k).")
+                   help="det eval 실패 시 다음 평가까지 학습 step (기본 100k).")
     args = p.parse_args()
 
     run_dir = Path(__file__).parent / "runs" / args.tag
@@ -474,8 +467,7 @@ def main():
     # CurriculumStopCallback은 조기 종료 또는 best 저장 둘 중 하나라도 켜져 있으면 추가.
     # (이 콜백이 reach_rate·align·final_dist TB 메트릭도 기록.)
     best_save_path = (run_dir / "model_best") if args.save_best else None
-    # v26: train.py 단독 사용 시도 deterministic check 활성 (det_env_fn = make_env 자체).
-    # Monitor 안 씌운 raw FishSwimEnv가 필요해서 별도 builder.
+    # deterministic check용 raw FishSwimEnv (Monitor 미적용).
     def _det_env_builder():
         return FishSwimEnv(
             target_theta_range=theta_range,
@@ -487,7 +479,7 @@ def main():
             window=args.eval_window,
             check_every=args.check_every,
             best_save_path=best_save_path,
-            det_env_fn=_det_env_builder if args.det_check else None,
+            det_env_fn=_det_env_builder,
             det_episodes=args.det_episodes,
             det_cooldown_steps=args.det_cooldown_steps,
         ))

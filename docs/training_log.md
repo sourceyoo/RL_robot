@@ -26,9 +26,9 @@ CLAUDE.md에서 분리한 학습 history 전체 — 결과 표·매트릭스·�
 
 ---
 
-## 학습 결과 요약 — main flow v1 ~ v28
+## 학습 결과 요약 — main flow v1 ~ v29-C
 
-**현재 미달 stage = s3b, 카드 천장 ~84% 확정** (v28 100 ep × 3 seed mean 84.3%). v22 79% → v25-A 84% → v26-A 80% → v27 100ep 85.7% → v28 84.3% — 카드 변형(ent_floor schedule / det check / multi-seed / 100 ep) 모두 80~86% 박스. **단일 변경으론 90% 임계 미돌파, 새 축 필수**. forgetting 없음 (s1·s2·s3a 100% 3 seed). 다음 카드 = **v29 (s3b 새 축)** — **v29-B (progress ×15) 진행 중**.
+**현재 미달 stage = s3b, 카드 박스 86~87% (90% 임계 미달)**. v22 79 → v25-A 84 → v26-A 80 → v27 85.7 → v28 84.3 → v29-B 87.0 (progress×15) → v29-C 86.0 (σ 11.4 ↑) → **v30-A 87.3 ± 5.7%p (yaw sign-aware, σ 단조 ↑ 추세 깨짐)** ⭐. progress axis는 ×15 sweet spot 확정, sign-aware axis는 **σ 줄임 효과 입증** ✓ but mean stalling. forgetting 없음 (s1·s2·s3a 100% 3 seed). **다음 카드 = v30-A + heading² 축 누적** (v31) 또는 v30-B (multi-seed +4로 σ 5.7%p 진정성 검증).
 
 ### 결별 그룹화 (main flow)
 
@@ -50,36 +50,40 @@ CLAUDE.md에서 분리한 학습 history 전체 — 결과 표·매트릭스·�
 | Q. det check + 학습량 추가 ❌ | **v26-A** | v25-A 정책 + det check callback (TB 90% trigger 후 det 50 ep 확인) + 학습 1M 추가. **s3b det 80%로 후퇴** — single seed 결과로 카드 천장 추정 | s3b det **80%** (single) |
 | **R. v25-A × multi-seed** ⭐⭐ | **v27** | v25-A 카드 seed 0/1/2 + `--det-check` (50 ep). **학습 졸업 50 ep det 90/92/90% (mean 90.7%)** — 일견 졸업. 그러나 Step 0 후속 100 ep eval로 **90/81/86% (mean 85.7%)** — **50 ep는 sample noise로 운 좋게 측정**. s3b 졸업 가설 partial. forgetting 없음 (s1·s2·s3a 100%) | s3b det **50 ep 90.7%** vs **100 ep 85.7%** ⚠ |
 | **S. v25-A × multi-seed × `--det-episodes 100`** ❌ | **v28** | v25-A 카드 seed 0/1/2 + `--det-check` **100 ep**. seed1만 진짜 졸업 (1M 직전 det 90%), seed 0/2는 max_steps 종료 (det 85%/76%). **100 ep eval 86/90/77% (mean 84.3%)** — v27 100 ep와 σ 안. **현 카드 천장 ~84% 확정, H1 reject** | s3b det **84.3 ± 5.4%p** ❌ |
+| **T. progress 가중치 ↑** ⭐ | **v29-B** | v25-A 카드 + `progress×10 → ×15`. 3 seed: 2 졸업 (405k/405k det 93%/93%) + 1 outlier (75%). **100ep eval mean 87.0 ± 8.5%p** (+2.7%p, **새 axis 첫 효과**). step 효율 ×1.5. **86~89 박스 진입, 90% 미달 −3%p** | s3b det **87.0 ± 8.5%p** ⚠ |
+| **U. progress ×18 (axis 강화)** ❌ | **v29-C** | v29-B 그대로 + `progress ×15 → ×18`. 3 seed: 2 졸업 (190k/195k det 92%/93%) + 1 outlier (73%). **100ep eval mean 86.0 ± 11.4%p** — v29-B와 σ 안. **mean stalling + σ ↑ — axis 강화 한계** ✗. 졸업 step ×2 빨라짐 (190k) but mean ↓. s3a 100→98 미세 후퇴 (작은 회전 정밀도 약화) | s3b det **86.0 ± 11.4%p** ❌ |
+| **V. yaw sign-aware (σ 줄임 axis)** ⭐ | **v30-A** | v29-B (progress×15) + `YAW_SIGN_W · yaw_rate · sign(yaw_err) · 0.005` 신규 가산. 3 seed: 1 졸업 (575k det 95%) + 2 중간 (88/80, det 86/85). **100ep eval mean 87.3 ± 5.7%p** — v29-B mean 동급 but **σ 단조 ↑ 추세 깨짐** (11.4 → 5.7) ⭐. outlier seed 깊이 ↓ (v29 75/73 → v30 80/88). mean 90% 미달 -2.7%p but 매트릭스 행3 (86~89/σ≤6) 통과 — 다음 후보 axis 추가 단계 | s3b det **87.3 ± 5.7%p** ⚠ |
 
 ### 버전별 변경점 (main flow v1~v28)
 
 v22까지 변경점은 위 그룹화 표 참조. v22 이후 카드 (s3b 천장 시도):
 
-| 변경 | v22 | v25-A | v26-A | v27 (× 3 seed) | **v28 (× 3 seed)** |
-|---|---|---|---|---|---|
-| 기반 카드 | v21 (yaw `|·|`0.005·N=20·ent_floor 차등) | (v22) | (v25-A) | (v25-A) | (v25-A) |
-| init 정책 | v21 final | v22 final | v25-A final | v25-A final | **v25-A final** (v27과 동일) |
-| s3b max_steps | **1M** | (v22) | 1M *추가* (누적 ~1.6M) | 1M (--end-stage 4) | 1M (--end-stage 4) |
-| **s3b ent_floor** | 0.003 fix | **0.003 → 0 linear decay (1M)** | (v25-A) | (v25-A) | (v25-A) |
-| **det check callback** | — | — | **활성 (50 ep)** | **활성 (50 ep)** | **활성 (100 ep)** ⭐ |
-| **seed** | default | default | default | 0 / 1 / 2 | **0 / 1 / 2** |
-| s3b TB end | 91% (peak 92%) | 92% (peak) | 90% | 90 / 91 / 94% | 90 / 90 / 91% |
-| **s3b det reach (100 ep)** | 79% | 84% | 80% | **85.7%** (Step 0) | **84.3%** ⚠ (86/90/77) |
-| 졸업 step | 654k (TB false) | 615k (TB false) | 1M 완주 (det 미달) | 705k / 880k / 245k (50 ep det) | **~1M / ~1M / 1M 종료** (seed1만 진짜 졸업) |
-| 한 줄 평가 | 학습량 ↑ 졸업 — but TB false positive | gap 좁힘 ✓ but single 84% | single seed 80% (single artifact) | multi-seed로 50 ep 졸업 — 100 ep로 noise 발견 | **100 ep로 카드 천장 ~84% 확정** ❌ |
+| 변경 | v22 | v25-A | v26-A | v27 | v28 | **v29-B** | **v29-C** | **v30-A** |
+|---|---|---|---|---|---|---|---|---|
+| 기반 | v21 (yaw·N=20·ent_floor 차등) | v22 | v25-A | v25-A | v25-A | **v25-A + progress ×15** | v29-B + progress ×18 | **v29-B + yaw sign-aware** |
+| init | v21 | v22 | v25-A | v25-A | v25-A | v25-A | v25-A | v25-A |
+| seed | default | default | default | 0/1/2 | 0/1/2 | 0/1/2 | 0/1/2 | **0/1/2** |
+| det check | — | — | 50 ep | 50 ep | 100 ep | 100 ep | 100 ep | 100 ep |
+| s3b TB peak | 91% | 92% | 90% | 90/91/94% | 90/90/91% | 91/91/99% | 91/96/96% | 90/98/96% |
+| **s3b det (100 ep)** | 79% | 84% | 80% | 85.7%* | 84.3%(86/90/77) | 87.0%(93/75/93) | 86.0%(73/93/92) | **87.3%(80/94/88)** |
+| σ | — | — | — | 3.7 | 5.4 | 8.5 | **11.4** ↑ | **5.7** ⬇ ⭐ |
+| 졸업 step | 654k F⁺ | 615k F⁺ | 1M (det 미달) | 705k/880k/245k | ~1M/~1M/1M(s1만) | 405k/1M/405k | 1M/195k/190k | **1M/575k/1M** (1 졸업, det 95%) |
+| 한 줄 평가 | TB false | gap ↓ ✓ 84% | single 80% | 50ep 운 좋음 | 100ep 천장 ~84% | +2.7%p 첫 axis 효과 | mean stalling + σ↑ | **σ 단조 ↑ 추세 깨짐** ⭐ |
+
+*v27 50ep det 90.7% / Step 0 100ep 85.7%, F⁺ = TB false positive (det 미달)
 
 ### Stage 진행 비교 (main flow)
 
 **v22까지는 TB stochastic 기준. 함정 #13 발견 후 v22~v28은 deterministic eval로 보정**:
 
-| Stage | v8 | v10 | v11 | v17 | v19 | v20 | v21 | **v22 (TB/det)** | **v25-A (det)** | **v26-A (det)** | **v27 50ep / 100ep** | **v28 100ep (3 seed mean)** |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| s3a (±15°) | 74% | 89% | 67% | 66% | 96%* | 63% | **90%** ⭐ | 100/100 | 98 | **100** | 100 / 100 ✓ | **100** ✓ |
-| s3b (±30°) | 70% | 72% | 44% | 62% | 61% | 53% | 69% | **90/79** | **84** | **80** ↓ | 90.7 / 85.7 ⚠ | **84.3 ± 5.4%p** ❌ (86/90/77) |
-| s3c (±60°) | **46%** | 28% | 38% | 33% | 28% | 21% | 38% | 37/42 | 43 | 42 | — / 44.0 | **41.7** (40/43/42) |
-| s3d (±90°) | 17% | 13% | 26% | 25% | 23% | 19% | 29% | **32**(peak50)/26 | 30 | 28 | — / 30.7 | **29.0** (29/32/26) |
+| Stage | v8 | v10 | v11 | v17 | v19 | v20 | v21 | **v22 (TB/det)** | **v25-A** | **v26-A** | **v27 (50/100ep)** | **v28** | **v29-B (×15)** | **v29-C (×18)** | **v30-A (sign)** |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| s3a (±15°) | 74 | 89 | 67 | 66 | 96* | 63 | **90** ⭐ | 100/100 | 98 | 100 | 100/100 ✓ | 100 ✓ | **100** ✓ | 98 ⚠ | **100** ✓ |
+| s3b (±30°) | 70 | 72 | 44 | 62 | 61 | 53 | 69 | **90/79** | 84 | 80 ↓ | 90.7/85.7 ⚠ | 84.3 ± 5.4 ❌ | 87.0 ± 8.5 ⚠ | 86.0 ± 11.4 ❌ | **87.3 ± 5.7** ⚠⭐ |
+| s3c (±60°) | **46** | 28 | 38 | 33 | 28 | 21 | 38 | 37/42 | 43 | 42 | —/44.0 | 41.7 | 44.3 | 48.3 | **45.0** |
+| s3d (±90°) | 17 | 13 | 26 | 25 | 23 | 19 | 29 | **32**/26 | 30 | 28 | —/30.7 | 29.0 | 31.0 | 32.3 | **31.7** |
 
-*v19 96%는 seed 분산 운. v22~v26-A는 `--start-stage 4`로 s3b만 학습. v27/v28도 동일 (init=v25-A). **v28 결과**: s3b 100 ep mean **84.3%** — v27 85.7%과 σ 안 (-1.4%p). **카드 천장 ~84% 확정**. s3c·s3d는 v25-A init 그대로 (학습 중 -2.3/-1.7%p, σ 안). forgetting 없음 (s1·s2·s3a 100% 3 seed).
+*v19 96%는 seed 분산 운. v22~v29-C는 `--start-stage 4`로 s3b만 학습 (init=v25-A). **v29-C 결과**: s3b mean **86.0 ± 11.4%p** — v29-B 87.0과 σ 안 (-1.0%p). **progress axis 강화 한계점**. σ는 v28 5.4 → v29-B 8.5 → v29-C 11.4로 단조 증가 (axis 강화가 분산도 키움). s3a 100→98 미세 후퇴 (작은 회전 정밀도 약화). s3c·s3d는 학습 안 했지만 fine-tune transfer로 +1~4%p. forgetting 없음 (s1·s2 100%, s3a 98).
 
 ### s3d (±90°) 결과 — 마지막 100 ep 윈도우 (v11~v22)
 
@@ -446,6 +450,138 @@ python3 curriculum.py --no-viewer --start-stage 4 --end-stage 4 \
 
 **다음 카드**: **v29 (s3b 새 축)** — v29-B (progress 가중치 ↑, ×10 → ×15) 우선 진행 중.
 
+### v29-B (progress×15 — s3b 첫 axis 효과 +2.7%p) ⭐
+
+**카드**: v25-A 카드 그대로 + `reward progress · 10 → · 15`. init=v25-A, seed 0/1/2, `--det-check --det-episodes 100`, `--start-stage 4 --end-stage 4`.
+
+**가설**: v22~v28 5개 카드(학습량/ent_floor schedule/det check/multi-seed/100 ep) 모두 80~86% 박스 → 단일 변경 한계 → **새 axis (progress 가중치 ↑) 필요**. 추진 신호 강화로 "정렬만 mode" 잔재 제거.
+
+**졸업 기록**:
+
+| seed | 졸업 | step | TB peak | 학습 중 det | det check trigger 수 |
+|---|---|---|---|---|---|
+| 0 | ✓ 진짜 졸업 | 405k | 96% | 80/88/89/81/**93** | 5회 (4 false + 1 진짜) |
+| 1 | ❌ 1M max_steps | — | 92% | 74/81/**85** | 3회 (모두 false, mode lock 40k) |
+| 2 | ✓ 진짜 졸업 | 405k | 99% | 79/89/**93** | 3회 (2 false + 1 진짜) |
+
+- ⭐⭐ **2/3 진짜 졸업** — v22 이후 단일 카드 첫 multi-seed 졸업
+- seed0/2 둘 다 정확히 405k에 졸업 (인상적 일관성)
+- TB-det gap: v22 12%p / v25-A 8%p / v29-B seed2 **6%p** (TB 99% → det 93%)
+- seed1만 학습 40k에 TB 91% 일찍 mode lock → 1M까지 못 깨고 final 75%
+
+**100 ep eval 결과** (sim/runs/v29_seedN/s3b_arc30/model.zip):
+
+| Stage | seed0 | seed1 | seed2 | mean | v28 mean | Δ |
+|---|---|---|---|---|---|---|
+| s1·s2·s3a | 100/100/100 | 100/100/100 | 100/100/100 | **100/100/100** ✓ | 100 | 0 |
+| **s3b** | **93** | **75** | **93** | **87.0 ± 8.5%p** ⚠ | 84.3 | **+2.7** ⭐ |
+| s3c | 50 | 35 | 48 | 44.3 | 41.7 | +2.6 |
+| s3d | 35 | 25 | 33 | 31.0 | 29.0 | +2.0 |
+
+**핵심 발견**:
+
+1. ⭐ **s3b 단조 증가 추세 +2.7%p** — v22~v28 5개 카드 박스(79~86)에서 **첫 의미 있는 돌파**. progress axis 가설 입증.
+2. ⚠ **σ 5.4 → 8.5%p ↑** — progress 강화가 분산도 키움. seed1 outlier가 mean을 끌어내림.
+3. **ep_seconds 단축**: v28 5.6~8.3s → v29-B 4.1~4.9s (졸업 seed). 추진 신호 강화 효과 직접 확인.
+4. **catastrophic forgetting 없음** — 3 seed 모두 s1·s2·s3a 100% 유지.
+5. **transfer 효과 (positive)**: s3c·s3d도 +2~3%p 작은 개선 — s3b axis 강화가 위 stage에도 도움.
+6. ❌ **90% 임계 -3%p 미달** — H1 (mean ≥ 90%) reject. seed0/2 단독은 93% 졸업, seed1 75%로 mean 87%.
+
+→ **카드 평가 매트릭스 (training_log L574)**: 87.0% → "86~89% 박스" → **"progress 더 강하게 (×18~20) 또는 yaw sign-aware 조합"**. v29-C 진행.
+
+### v29-C (progress×18 — axis 강화 한계 확정) ❌
+
+**카드**: v29-B 그대로 + `progress · 15 → · 18`. 다른 변수 모두 v29-B/v25-A와 동일 (init=v25-A, seed 0/1/2, det check 100 ep).
+
+**가설**:
+- H1 (main): axis 더 강화로 s3b mean ≥ 90% 도달
+- H2 (reject): 정렬 약화로 75~85%로 후퇴
+- H3 (partial): σ ↑, 0/2 95%+ but 1 outlier로 86~89% 박스
+
+**졸업 기록**:
+
+| seed | 졸업 | step | TB peak | 학습 중 det |
+|---|---|---|---|---|
+| 0 | ❌ 1M 종료 | — | 91% (665k) | 89/85/**73** (후퇴) |
+| 1 | ✓ 진짜 졸업 | **195k** ⭐ | 96% | 80/**93** |
+| 2 | ✓ 진짜 졸업 | **190k** ⭐ | 96% | 74/84/**92** |
+
+- ⭐ **졸업 step 190~195k** — v29-B 405k 대비 **×2 효율**. progress×18로 axis 더 강하니 학습 더 빠름.
+- seed0는 665k에 TB 91% best 도달 후 det 89→85→73으로 후퇴 → 1M 종료 (mode lock 깊어짐).
+
+**100 ep eval 결과** (sim/runs/v29c_seedN/s3b_arc30/model.zip):
+
+| Stage | seed0 | seed1 | seed2 | mean | v29-B mean | Δ |
+|---|---|---|---|---|---|---|
+| s1·s2 | 100/100 | 100/100 | 100/100 | **100/100** ✓ | 100/100 | 0/0 |
+| **s3a** | **94** | 100 | 100 | **98.0** ⚠ | 100 | **-2.0** |
+| **s3b** | **73** | **93** | **92** | **86.0 ± 11.4%p** | 87.0 | **-1.0 (σ 안)** |
+| s3c | 42 | 50 | 53 | 48.3 | 44.3 | +4.0 |
+| s3d | 27 | 32 | 38 | 32.3 | 31.0 | +1.3 |
+
+**핵심 발견**:
+
+1. ❌ **H1 reject** — s3b mean 86.0% (-1.0%p, σ 안에 stalling). v29-B와 동일 86~89 박스 → **progress axis 강화 한계점 확정**.
+2. ⚠ **H3 적중 (σ 강화)** — σ v28 5.4 → v29-B 8.5 → v29-C **11.4%p** 단조 증가. axis 강화가 분산도 키움.
+3. ⭐ **졸업 step 효율 ×2** — 190~195k 졸업 (v29-B 405k 대비). axis 강화가 학습 속도엔 명확한 도움.
+4. ⚠ **s3a 미세 후퇴 100 → 98** (seed0 94%) — progress×18이 너무 강해서 작은 회전 정밀도 약화. s3a 단조 100% 유지 못한 첫 사례 (v22 이후).
+5. **outlier 더 깊어짐** — v29-B seed1 75% → v29-C seed0 **73%**. progress 강화가 mode lock도 깊게 만듦.
+6. **s3c +4%p**: 흥미롭게도 s3c 평균이 v29-B 44.3 → v29-C 48.3로 더 올라감 (s3b 학습이 s3c에 transfer).
+
+**메타-결론**:
+
+- **progress axis 강화의 effective range**: ×10 (v22~v28 84%) → ×15 (v29-B 87%) → ×18 (v29-C 86%). **×15가 sweet spot**, ×18은 oversaturation.
+- **단일 axis 한계 입증** — progress만으로는 86~89 박스 못 넘음 (s3b 90% 미달).
+- **다음 카드 = 새 axis (yaw sign-aware / heading squared) 또는 multi-seed 5~7로 분산 vs 본질 판정** 필수.
+
+### v30-A (yaw sign-aware — σ 줄임 axis 효과 입증) ⭐
+
+**카드**: v29-B (progress×15) 그대로 + `YAW_SIGN_W · yaw_rate · sign(yaw_err) · 0.005` 신규 가산. sign(yaw_err)은 head_dir × rel 2D cross product. 다른 변수 모두 v29-B와 동일 (init=v25-A, seed 0/1/2, det check 100 ep, progress·15).
+
+**가정**: 단일 tail motor 물리상 절대적 제자리 회전 불가능 → yaw|·| 보상 그대로 보존. sign 항은 *회전 방향* 정확도 강제 (target 왼쪽이면 왼쪽 회전만 +).
+
+**가설**:
+- H1 (main): outlier seed mode lock 해소 → mean ≥ 90% AND σ ≤ 6%p
+- H2 (reject): 반대 방향 회전 페널티가 mode catalysis 약화 → 후퇴
+- H3 (partial): mean 86~89% but σ ↓ → 다음 axis 추가 단계
+
+**졸업 기록**:
+
+| seed | 졸업 | step | TB peak | 학습 중 det | final |
+|---|---|---|---|---|---|
+| 0 | ❌ 1M 종료 | — | 90% (385k) | 86% | det 86% |
+| 1 | ✓ 진짜 졸업 | **575k** ⭐ | 98% | 85/86/85/**95** | **det 95%** (사상 최고) |
+| 2 | ❌ 1M 종료 | — | 96% (890k) | 80/84/87/80/83/82/85 | det 85% |
+
+**100 ep eval 결과** (sim/runs/v30a_seedN/s3b_arc30/model.zip):
+
+| Stage | seed0 | seed1 | seed2 | mean | v29-B | Δ |
+|---|---|---|---|---|---|---|
+| s1·s2·s3a | 100/100/100 | 100/100/100 | 100/100/100 | **100** ✓ | 100 | 0 |
+| **s3b** | **80** | **94** | **88** | **87.3 ± 5.7%p** | 87.0 ± 8.5 | mean +0.3 (오차 안), σ **-2.8** ⬇ |
+| s3c | 43 | 49 | 43 | 45.0 | 44.3 | +0.7 |
+| s3d | 30 | 33 | 32 | 31.7 | 31.0 | +0.7 |
+
+**핵심 발견** ⭐⭐:
+
+1. ⭐⭐ **σ 단조 ↑ 추세 깨짐** — v28 5.4 → v29-B 8.5 → v29-C **11.4** → v30-A **5.7** ⬇. v22 이후 처음으로 σ 감소. **outlier seed mode lock 해소 axis 본격 발견**.
+2. **mean 효과 미미** (+0.3 vs v29-B) — H3 적중 (mean stalling but σ ↓).
+3. **outlier 깊이 ↓**: v29-B 75 / v29-C 73 → **v30-A 80**. v22 이후 lower outlier 가장 높음.
+4. **seed1 det 95%** — v22 이후 단일 seed det 최고. mode lock 완전 해소 가능성 입증.
+5. **forgetting 없음**: 3 seed s1·s2·s3a 100% 유지.
+6. **transfer 약함**: s3c +0.7, s3d +0.7로 v29-B 대비 거의 동일. axis 추가가 fine-tune transfer엔 영향 없음.
+
+**ep_s + align 양상** (seed별):
+- seed0: ep_s 7.55s, align +0.82 — "정렬 best + reach 80% 낮음" (v20 패턴 부분 재현, but reach 양호)
+- seed1: ep_s 3.76s, align +0.69 — "이동+정렬 균형" 졸업 mode
+- seed2: ep_s 5.34s, align +0.70 — 중간 양상
+
+**메타-결론**:
+
+- ⭐⭐ **σ 줄임 axis 발견** — 매트릭스 σ ≤ 6%p 기준 통과 (5.7%p). v30-A axis는 카드 정착 가치 ✓.
+- **mean 천장 ~87%** — sign-aware 단독으로 90% 미돌파. 다음 axis 누적 필요.
+- **누적 진행**: v29-B/C에서 progress sweet spot ×15 확정, v30-A에서 σ 줄임 axis 추가. **다음 = v30-A + heading² (v31)** 또는 v30-A + multi-seed +4 (σ 5.7%p 진정성 검증).
+
 ---
 
 ## 핵심 통찰 (main flow)
@@ -463,6 +599,9 @@ python3 curriculum.py --no-viewer --start-stage 4 --end-stage 4 \
 - ✓ **forgetting 없음 (Step 0 + v28)**: 3 seed 모두 s1·s2·s3a 100/100/100% — s3b fine-tune이 이전 stage 망가뜨리지 않음. mixed sampling/rehearsal 새 축 카드 불필요.
 - ⭐ **det check 인프라 실증 (v27 seed2 + v28 다수)**: 145k에서 TB 90% trigger → det 84% (false positive) → cooldown after 245k에서 TB 94% / det 90% (진짜 졸업). v28도 8회 trigger 중 1회만 진짜 졸업 (TB stochastic-det gap이 22%p까지 벌어진 사례 차단). **`--det-check` 옵션 default 활성 권장**.
 - ❌ **v28 (100 ep det check) — 카드 천장 ~84% 확정**: v25-A 카드 그대로 + `--det-episodes 50 → 100` 변경. 3 seed 100 ep eval mean **84.3% (86/90/77)** — v27 85.7%과 σ 안. v22 79% → v25-A 84% → v26-A 80% → v27 100ep 85.7% → v28 84.3% — 카드 변형 5개 모두 80~86% 박스. **단순 학습량/측정 강화론 90% 미돌파, 새 축 필수**.
+- ⭐ **v29-B (progress×15) — s3b 첫 axis 효과 +2.7%p**: v25-A 카드 + `progress · 10 → · 15`. 3 seed 100 ep eval mean **87.0% (93/75/93)** — **새 axis 가설 입증** (v22~v28 박스 첫 돌파). 2/3 진짜 졸업 (405k det 93%/93%), seed1만 outlier 75% (40k mode lock). ep_seconds 5.6~8.3s → 4.1~4.9s 단축 (추진 신호 강화 직접 확인). σ 5.4 → 8.5%p (분산 ↑). 90% 임계 -3%p 미달.
+- ❌ **v29-C (progress×18) — axis 강화 한계 확정**: v29-B 카드 + `progress · 15 → · 18`. 3 seed 100 ep eval mean **86.0% (73/93/92)** — v29-B 87.0과 σ 안 (-1%p, **stalling**). σ 8.5 → 11.4%p 단조 증가. ⭐ **졸업 step ×2 빨라짐 (190~195k vs v29-B 405k)** but mean 효과 0. s3a 100→98 미세 후퇴 (seed0 94%) — 작은 회전 정밀도 약화. **progress axis effective range ×10~15, ×18은 oversaturation**. 다음 = 새 axis (yaw sign-aware / heading squared) 또는 multi-seed 5~7.
+- ⭐⭐ **v30-A (yaw sign-aware) — σ 줄임 axis 효과 입증**: v29-B + `YAW_SIGN_W · yaw_rate · sign(yaw_err) · 0.005` 신규 가산. 3 seed eval mean **87.3 ± 5.7%p (80/94/88)** — mean v29-B 동급 but **σ 단조 ↑ 추세 깨짐** (5.4 → 8.5 → 11.4 → **5.7** ⬇). seed1 진짜 졸업 575k det 95%(v22 이후 최고). outlier seed 깊이 ↓ (v29 75/73 → 80). 가정 "제자리 회전 물리적 불가능 → yaw|·| 보존" 하에 sign 추가 axis가 mode lock 해소 메커니즘. 매트릭스 행3 (86~89/≤6) 통과. mean 천장 ~87% — 다음 axis 누적 필요.
 
 ---
 
@@ -491,6 +630,9 @@ python3 curriculum.py --no-viewer --start-stage 4 --end-stage 4 \
 7. **v25-A ent_floor schedule + v27 multi-seed** ⭐⭐ — stochastic-det gap 좁힘 + multi-seed로 s3b 50 ep 졸업 임계 통과 (90.7%). v22~v26 single seed 결론 부분 정정.
 8. **Step 0 100 ep eval (v27 후속)** — 50 ep det check sample noise 발견 (5%p gap). 졸업 확정 표준 = 100 ep eval 본격 확립. 함정 #16.
 9. **v28 (100 ep det check × multi-seed)** ❌ — 카드 천장 ~84% 확정. v22~v28 5개 카드 80~86% 박스. 단순 측정 강화로 임계 못 깬 것 입증 → 새 축 카드 필요. 함정 #17.
+10. **v29-B (progress×15 — s3b 첫 axis 효과)** ⭐ — v22~v28 박스 첫 돌파 +2.7%p. 2/3 진짜 졸업 (det 93%/93%, 405k). progress axis 가설 입증. but 90% 임계 -3%p 미달 (seed1 75% outlier).
+11. **v29-C (progress×18 — axis 강화 한계)** ❌ — mean 86% stalling, σ 11.4%p ↑. 졸업 step ×2 효율 (190k) but mean 변화 없음. **progress axis effective range ×10~15** 입증 → 함정 #18.
+12. **v30-A (yaw sign-aware — σ 줄임 axis 발견)** ⭐⭐ — σ 단조 ↑ 추세 깨짐 (11.4 → 5.7). mean v29-B 동급(87.3) but outlier 해소. seed1 det 95% v22 이후 최고. axis 정착 ✓ but mean 천장 ~87% → v31 (sign + heading² 누적) 또는 multi-seed 검증 필요.
 
 ---
 
@@ -509,6 +651,8 @@ python3 curriculum.py --no-viewer --start-stage 4 --end-stage 4 \
 15. **TB false positive 차단 = `--det-check` callback (v27 seed2 실증)**: v22 함정 #13 차단 인프라. v27 seed2가 145k에서 TB 90% trigger → det 84% ❌ → cooldown 100k → 245k에서 진짜 졸업. det check 없었다면 145k에서 잘못 졸업했을 것. **새 학습은 default `--det-check` 활성**.
 16. **`--det-episodes` 50은 학습 trigger엔 OK but 졸업 확정 측정으로 부족** (v27 Step 0 발견): v27 학습 중 50 ep det check 90/92/90% (mean 90.7) 통과 → 졸업 → 100 ep eval로 재측정하니 90/81/86% (mean 85.7%, **5%p gap**). 50 ep는 sample 적어 운 좋은 분포에서 trigger 가능. **졸업 확정은 항상 `eval_stages.py` 100 ep** (50 ep는 학습 중 cheap check). **다음 학습부터 `--det-episodes 100` 권장**.
 17. **단순 측정 강화로 카드 천장 못 깸 (v28 입증)**: `--det-episodes 50 → 100`만 변경한 v28도 100 ep mean **84.3%** (v27 85.7%과 σ 안). 학습 중 100 ep det check는 false positive (TB-det gap 22%p까지 벌어짐) 잡아내는 데 효과적이나, 카드 본질 천장은 그대로. v22 79% → v25-A 84% → v26-A 80% → v27 85.7% → v28 84.3% — **단일 변경(학습량/측정/seed)으로 80~86% 박스 못 벗어남**. **s3b 90% 임계 돌파 = 새 reward 축 (yaw sign-aware / progress 강화 / N 변경) 필수**.
+18. **progress axis 강화의 effective range (v29-B vs v29-C)** ⚠: `progress · 10 → · 15`로 v29-B mean +2.7%p (87.0%) — 새 axis 첫 효과. but `· 15 → · 18`로 v29-C mean **86.0%로 stalling** + σ 11.4%p ↑. ⭐ **졸업 step ×2 빨라짐** (190k vs 405k) 하지만 mean 효과 0. s3a 100→98 미세 후퇴 (작은 회전 정밀도 약화). **단일 axis 강화는 sweet spot(×15)까지만 효과, 그 위는 oversaturation**. **다음 카드 = 새 axis (yaw sign-aware / heading squared / N 변경) 또는 multi-seed 5~7로 outlier vs 본질 판정 필수**. ✗ 단일 axis 더 밀어도 의미 없음.
+19. **σ가 카드 평가의 mean과 동등 핵심 (v30-A 입증)** ⭐⭐: v22~v29-C σ 단조 ↑ (5.4 → 8.5 → 11.4) 추세를 v30-A (yaw sign-aware)가 **5.7%p로 깨짐**. mean은 v29-B 동급(87.3)이지만 outlier seed 깊이 ↓ (v29 75/73 → v30 80) + seed1 det 95% (v22 이후 최고). 카드 평가 시 mean ≥ 90% 못 봐도 **σ ↓ + outlier 양상 ↑이면 카드 정착 가치 있음** (다음 axis 누적의 기반). 매트릭스 행3 (86~89/≤6) 통과는 reject 아니라 "다음 후보 axis 추가" 의미. 단일 카드로 90% 못 깰 때 다축 누적이 본질.
 
 **s3d_90 라인 함정** → [`docs/s3d_90_line.md`](s3d_90_line.md) (YAW_W 변형 / single seed baseline / end metric drift artifact 등).
 
@@ -536,54 +680,68 @@ python3 curriculum.py --no-viewer --start-stage 4 --end-stage 4 \
 
 ## 다음 카드 후보 상세
 
-**현재 우선순위 = s3b 새 축 카드** (v28로 현 카드 천장 ~84% 확정, 90% 임계 미달). forgetting 없음 ✓ → 새 축이 s3b에서만 작용하면 됨.
+**현재 우선순위 = s3b 새 reward 축 또는 multi-seed 확장**. v22~v29-C 7개 카드 80~87% 박스 (v29-B/C가 첫 axis 효과 ✓ but mean stalling). forgetting 없음 ✓ → s3b에서만 작용하면 됨.
 
-### v29 후보 (s3b 새 reward 축)
+### v30 후보 (v29-C 결과 매트릭스 적용: "86~89 박스 → 새 axis 또는 multi-seed")
 
-v22~v28 5개 카드(학습량 / ent_floor schedule / det check / multi-seed / 100 ep) 모두 80~86% 박스. 단일 변경 효과 입증 끝. **다음 = reward 축 자체를 바꿔야**.
+**v29-B/C 결론**: progress axis effective range ×10~×15 (sweet spot 87%). ×18 oversaturation. **단일 axis 강화는 끝, 다음 = 새 axis 또는 분산 판정**.
 
-**v29 후보 A (yaw sign-aware)**:
-- 현재: `reward += YAW_W · |yaw_rate| · 0.005` — 회전 시도 자체에 +
-- v29-A: `reward += YAW_W · yaw_rate · sign(target_yaw_error) · 0.005` — target 방향 회전 시만 +
-- 가설: 절대값 reward는 mode catalysis trigger는 ✓ but 정렬 정확도까지 못 끌어올림. sign-aware로 회전+정렬 동시 강제.
-- ⚠ **s3d_90 라인에서 reject** (구 v24-A/v27/v28 — `s3d_90_line.md` 참조). "부호 없음이 mode catalysis의 본질"이라는 결론. 단 s3b 기준 multi-seed 재검증 가치는 있음.
+**v30 후보 A (yaw sign-aware) ⭐ 추천 1**:
+- 현재: `reward += YAW_W · |yaw_rate| · 0.005` (회전 시도 자체에 +)
+- v30-A: `reward += YAW_W · yaw_rate · sign(target_yaw_error) · 0.005` (target 방향만 +)
+- 가설: progress×15 보존(추진 신호) + sign-aware로 정렬 정확도 강제. 두 축 동시 작용.
+- s3d_90 라인 reject 이력 (구 v24-A/v27/v28) but s3b 기준 + progress×15 조합은 재검증 가치.
+- 비용: ~3시간 (3 seed × 1M).
 
-**v29 후보 B (progress 가중치 ↑) — 진행 중 ⏳**:
-- 현재 `progress · 10` → `progress · 15`
-- 가설: 정렬만 mode 줄이고 추진 신호 강화. v28 s3b ep_s 5.6~8.3s (10s ep 한계 근접) — 추진 부족 신호.
-- yaw 축 보존 (mode catalysis 유지) + 추진 신호 단일 강화.
+**v30 후보 B (multi-seed 5~7로 outlier vs 본질 판정) ⭐ 추천 2**:
+- v29-B 카드 그대로 + seed 3/4/5/6 추가 → 총 7 seed.
+- 가설: v29-B 87.0% / v29-C 86.0% σ 8.5~11.4%p가 random sampling인지 카드 본질 분산인지 판정. seed별 운에 따라 75~93% 분산이 카드 random이면 mean 더 높아질 가능성.
+- 비용: ~3.7시간 (4 seed 추가 × 56분).
 
-**v29 후보 C (N=20 → 24 or 16)**:
+**v30 후보 C (heading error squared)**:
+- v30-C: `reward += -K · yaw_error²` (정렬 정확도 직접 강제 axis)
+- 가설: progress 강화로 추진은 OK, 이제 정렬 정확도 직접 가산 → 임계 90% 도달.
+- 비용: 3시간.
+
+**v30 후보 D (N=20 → 16/24)**:
 - v11 N=16 / v17 N=24 / v19~ N=20.
-- ⚠ SAC.load 시 obs Box mismatch → init_from 무력화 (함정 #8). s1부터 새 학습 필요.
+- ⚠ SAC.load obs Box mismatch → init_from 무력화 (함정 #8). s1부터 새 학습 필요.
+- 비용: 2~3시간/seed.
 
-**기타 후보**:
-- NN 확장 [256,256,128] — v12 catastrophic이었으나 카드 조합 달라짐. SAC.load layer mismatch (함정 #8).
-- heading error squared term — `-K·(yaw_error)²` 새 axis.
-- time penalty — `-α·step_count`. ep_s 단축 압박.
+### 우선순위 (v30-A 완료 후 갱신)
 
-### 우선순위 (v29-B 결과에 따라 갱신)
+**v30-A 결과** (이미 진행): mean 87.3% / σ 5.7%p — 매트릭스 행3 (86~89/≤6) 통과. **σ 줄임 axis 발견 ✓, mean 천장 ~87% → 다음 axis 누적**.
 
-1. **v29-B (진행 중)** — progress ×15 multi-seed 결과 대기. mean ≥ 90% → v30 (s3c). 미달 → 다음 후보로.
-2. v29-A (yaw sign-aware) — s3d_90 reject 결과 multi-seed 재검증 필요 시.
-3. v29-C (N 변경) — A·B reject 후, init_from 비용 감수.
-4. NN 확장 / heading squared / time penalty — 새 axis 탐색.
+전제: 단일 tail motor 물리상 절대적 제자리 회전 불가능 → yaw \|·\| 보상 + sign-aware 보존. mean 끌어올릴 추가 axis 필요.
 
-### v29-B 결과 평가 매트릭스
+1. **v31-A (v30-A + heading²)** ⭐ — 축 누적 카드. v30-A 그대로 + `-K · yaw_err²` 신규 가산. sign이 σ 줄였으니 heading²이 mean 끌어올릴지 검증. progress×15 + yaw\|·\| + sign + heading² 4축.
+2. **v30-B (v30-A × seed +4 = 총 7 seed)** — v30-A σ 5.7%p가 random sampling 운인지 카드 본질 안정성인지 판정. seed 3/4/5/6 추가.
+3. v30-D (N 변경) — 축 누적 후 추가 검토. SAC.load 무력화 비용 감수, s1부터 새 학습.
 
-| v29-B 100 ep mean | 판정 → 다음 카드 |
-|---|---|
-| ≥ 90% | ✓ s3b 졸업 → v30 (s3c 같은 axis 적용) |
-| 86~89% | ⚠ 부분 개선 → progress 더 강하게 (×18~20) 또는 yaw sign-aware 조합 |
-| ~84% (v28 동급) | ❌ progress axis 무력 → v29-A multi-seed 또는 새 axis |
-| < 80% | ❌ 후퇴 (정렬 약화 H2 발현) → weight rollback, 다른 axis |
+(v30-C heading² 단독은 v31-A로 흡수 — v30-A axis 위에 누적이 더 효율적. v30-α "yaw·forward 결합"은 motivation 무효화로 제거.)
+
+### v30 결과 평가 매트릭스 (공통)
+
+| mean | σ | 판정 → 다음 |
+|---|---|---|
+| ≥ 90% | ≤ 6%p | ✓ s3b 안정 졸업 → v31 (s3c) |
+| ≥ 90% | > 6%p | ⚠ mean 통과 but 분산 ↑ → v30-B (multi-seed +4) 분산 검증 |
+| 86~89% | ≤ 6%p | ⚠ 부분 개선 + 안정성 ✓ → 다음 후보로 axis 추가 |
+| 86~89% | > 6%p | ❌ mean·σ 둘 다 미흡 → axis reject, 다음 후보 |
+| < 86% | any | ❌ axis reject |
+
+⚠ σ 기준 = v28 baseline 5.4%p + 여유. 단조 ↑ 추세 (v28 5.4 → v29-B 8.5 → v29-C 11.4) 카드는 reject 신호.
 
 ### 우선순위 (장기): s3c·s3d (s3b 90% 졸업 후)
 
-v30 — s3c 1M + s3b 졸업 axis + multi-seed + 100 ep. v31 — s3d 같은 방법론.
+v31 — s3c 1M + s3b 졸업 axis + multi-seed + 100 ep. v32 — s3d 같은 방법론.
 
 ### s3 외 인프라/메타 카드 (낮은 우선순위)
 
 - **HER (Hindsight Experience Replay)** — env Dict obs 큰 변경. 강력하나 구현 비용 큼.
 - **fin actuator 추가** — 단일 모터 한계 자체를 풂. (사용자 명시 제외)
 - **ANN surrogate (Lighthill / Zhong)** — fluid model 한계 우회. 실물 motion capture 필요.
+
+---
+
+> **m4 환경 (frame_skip 42 + V2 spec actuator, 2026-05~)** → 별도 파일 [`docs/training_log_m4.md`](training_log_m4.md). 본 파일은 mode3-planar 환경의 v1~v33 history만.

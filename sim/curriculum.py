@@ -41,21 +41,12 @@ from train import (
 
 PI = math.pi
 
-# v4: action history obs 추가 (시간적 비대칭 ctrl 패턴 학습 enable).
-# yaw_test.py 진단으로 D2 패턴 등 비대칭이 yaw 회전 핵심임 확인.
-# v11: 8 → 16. N=8은 1/2 wag cycle만 커버, N=16은 1 wag cycle (3Hz × 17 step/cycle).
-# v17-A: 16 → 24 (1.5 wag cycle). 큰 회전 회복 ✓ but 작은 회전 후퇴 (s3a 80→66%).
-# v18: max_steps 1M도 천장 못 깸 → N=24 카드 천장 25~30% 본질적 진동 입증.
-# v19-A: 24 → 20 (1.25 wag cycle 절충). N=16(v11 s3a 67%)·N=24(v17 s3a 66%) 사이.
-# 큰 회전 표현력 유지 + 작은 회전 후퇴 완화 시도.
-# obs dim: 11 + 20 = 31. (N 변경은 SAC.load 호환 X — 함정 #9. s1부터 새 학습.)
+# action history obs: 비대칭 ctrl 패턴(yaw 회전 핵심) 학습용. N=20 = 1.25 wag cycle.
+# 변경 시 SAC.load obs Box mismatch — s1부터 새 학습 필요 (함정 #9).
 ACTION_HISTORY_N = 20
 
-# v10: Stage별 차등 ent_floor.
-# v8 floor 0.005 / v9 floor 0.002 결과 종합 — 단일 floor로 전체 cover 불가 입증.
-# 작은 회전(s3a/b)은 정확도 stage → 낮은 floor (0.002~0.003), 큰 회전(s3c/d)은
-# 비대칭 ctrl 패턴 발견 위해 높은 floor (0.005~0.006). v7 floor 0.02는 재앙이라
-# 상한 보수적으로.
+# Stage별 차등 ent_floor: 작은 회전(s3a/b)은 정확도 → 낮은 floor, 큰 회전(s3c/d)은
+# 비대칭 ctrl 패턴 탐색 → 높은 floor. floor 0.02 이상은 학습 붕괴.
 STAGES = [
     {
         "tag": "s1_forward",
@@ -73,8 +64,7 @@ STAGES = [
         "max_steps": 400_000,
         "ent_floor": 0.002,
     },
-    # v6: Stage 3 전체 ep_seconds 30s (10s/20s → 30s 통일).
-    # yaw_test.py D2 best 4.6°/s × 30s = 138° 회전 가능 → ±90° 회전+추진(0.5m, 1.8s)에 9s 여유.
+    # Stage 3 전체 ep_seconds 30s: yaw_test.py D2 4.6°/s × 30s = 138° 회전 여유.
     {
         "tag": "s3a_arc15",
         "desc": "Stage 3a — 좌우 ±15° (θ ∈ π ± π/12)",
@@ -89,14 +79,11 @@ STAGES = [
         "desc": "Stage 3b — 좌우 ±30° (θ ∈ π ± π/6)",
         "theta_min": PI - PI / 6, "theta_max": PI + PI / 6,
         "success_radius": 0.08,
-        # v31-A: 250k → 1M. v21에서 s3b 69%로 max_steps에 강제 진행 — 학습량 부족 가설 검증.
-        # s3d와 동급 학습량으로 천장이 진짜 카드 한계인지 학습량 부족인지 분리.
         "max_steps": 1_000_000,
         "episode_seconds": 30.0,
         "ent_floor": 0.003,
-        # v25-A: ent_floor linear decay 0.003 → 0 (학습 1M 동안). v22 s3b TB end 90% vs
-        # deterministic 79% 발견 — SAC random action 진동 정점 trigger의 false positive였음.
-        # 학습 후반 floor 유지가 deterministic policy 완성 막는 가설. 0~1M linear decay로 검증.
+        # ent_floor linear decay 0.003 → 0: 학습 후반 deterministic policy 수렴.
+        # stochastic-deterministic gap 좁히기 (함정 #13 대응).
         "ent_floor_end": 0.0,
     },
     {
@@ -104,11 +91,9 @@ STAGES = [
         "desc": "Stage 3c — 좌우 ±60° (θ ∈ π ± π/3)",
         "theta_min": PI - PI / 3, "theta_max": PI + PI / 3,
         "success_radius": 0.08,
-        # v23: 350k → 1M. v22 s3c 37%/peak 50%로 350k 강제 진행 — s3b와 같은 학습량 부족 가설 검증.
         "max_steps": 1_000_000,
         "episode_seconds": 30.0,
-        # v20-A: 0.005 → 0.008. v19(N=20) s3c·d mode collapse (align −0.17/−0.37) 진단
-        # = s3a 96% narrow mode 잔재가 큰 회전 entropy floor로 못 깨짐. floor ↑로 강제 탐색.
+        # 큰 회전: floor ↑로 narrow mode 깨고 비대칭 ctrl 탐색.
         "ent_floor": 0.008,
     },
     {
@@ -116,12 +101,8 @@ STAGES = [
         "desc": "Stage 3d — 좌우 ±90° (θ ∈ [π/2, 3π/2], 전체 head arc)",
         "theta_min": PI / 2, "theta_max": 3 * PI / 2,
         "success_radius": 0.08,
-        # v22-A: 500k → 1M. v21(yaw reward) 정점 38% (186k) 후 후반 29%로 후퇴.
-        # 학습량 ↑로 정점 평균값 안정화 시도. v18(N=24+학습량 ↑) 같은 카드는 안정화
-        # 실패였으나 v21은 다른 dynamics라 시도 가치.
         "max_steps": 1_000_000,
         "episode_seconds": 30.0,
-        # v20-A: 0.006 → 0.010. s3c와 동일 메커니즘 — narrow mode 깨기 위한 강제 entropy.
         "ent_floor": 0.010,
     },
 ]
@@ -142,20 +123,18 @@ def main():
                         "현 미달 stage만 돌리려면 --start-stage X --end-stage X.")
     p.add_argument("--device", type=str, default="cuda")
     p.add_argument("--seed", type=int, default=None,
-                   help="SAC seed (v29 multi-seed 평가용). 미지정시 SB3 default.")
-    p.add_argument("--tb-tag", type=str, default="model3_v28",
-                   help="tb_logs sub-dir 이름 (v29 multi-seed면 model3_v29_seed{N})")
+                   help="SAC seed (multi-seed 평가용). 미지정시 SB3 default.")
+    p.add_argument("--tb-tag", type=str, default="model3",
+                   help="tb_logs sub-dir 이름 (multi-seed면 model3_vN_seed{N})")
     p.add_argument("--runs-subdir", type=str, default=None,
-                   help="runs/ 안에서 stage tag prefix (예: v29_seed0 → runs/v29_seed0/s3d_arc90)")
+                   help="runs/ 안에서 stage tag prefix (예: vN_seed0 → runs/vN_seed0/s3b_arc30)")
     p.add_argument("--init-from", type=str, default=None,
-                   help="v26: start-stage init 모델 path. None이면 이전 stage model.zip 자동.")
-    p.add_argument("--det-check", action="store_true",
-                   help="v26: TB stochastic 90% trigger 후 deterministic eval로 진짜 90% 확인. "
-                        "v22/v25-A 모두 TB 90~92%지만 deterministic 79~84% 였던 false positive 해결.")
-    p.add_argument("--det-episodes", type=int, default=50,
-                   help="v26: deterministic eval 시 ep 수 (기본 50). 비용 ~4분/회.")
+                   help="start-stage init 모델 path. None이면 이전 stage model.zip 자동.")
+    p.add_argument("--det-episodes", type=int, default=100,
+                   help="stage 졸업 deterministic eval ep 수 (기본 100, eval_stages.py와 통일). "
+                        "TB stochastic 90% trigger 후 이 ep 수로 진짜 90% 확인. 비용 ~8분/회.")
     p.add_argument("--det-cooldown-steps", type=int, default=100_000,
-                   help="v26: det eval 미달 시 다음 평가까지 학습 step (기본 100k).")
+                   help="det eval 미달 시 다음 평가까지 학습 step (기본 100k).")
     args = p.parse_args()
 
     if args.start_stage < 1 or args.start_stage > len(STAGES):
@@ -169,10 +148,7 @@ def main():
     sim_dir = Path(__file__).parent
     runs_dir = sim_dir / "runs"
     plot_dir = sim_dir / "plots"
-    # 모든 단계의 tensorboard log를 model3_vN 폴더 안에 묶어 TB UI에서 v별 비교 가능.
-    # 새 학습 시작할 때마다 v숫자를 올려도 되고, 같은 v 안에서 stage 진행도 가능.
-    # v29: v22 카드 (yaw `|·|`·0.005) multi-seed 평가 — seed 0/1/2 각각 별도 tb_dir.
-    # --tb-tag와 --runs-subdir로 분리.
+    # 카드 버전·seed별 tensorboard log 분리: --tb-tag로 디렉토리 명시.
     tb_dir = sim_dir / "tb_logs" / args.tb_tag
     tb_dir.mkdir(parents=True, exist_ok=True)
 
@@ -192,9 +168,8 @@ def main():
         )
         time.sleep(1.0)  # viewer가 뜰 시간
 
-    # 시작점 모델 (Stage 2 이상부터 시작 시)
-    # v29: --runs-subdir 지정 시 prev_model은 *기본* runs_dir/{prev_tag}/model.zip
-    # (v22 s3c 같은 공용 init), 학습 결과는 runs_dir/{subdir}/{tag}/로 저장.
+    # 시작점 모델 (Stage 2 이상부터 시작 시).
+    # --runs-subdir 지정 시 init은 공용 runs_dir/{prev_tag}, 결과는 {subdir}/{tag}/로 저장.
     prev_model_path = None
     if args.start_stage > 1:
         if args.init_from is not None:
@@ -237,16 +212,12 @@ def main():
                 print(f"[curriculum] {prev_model_path} 정책 로드 (fine-tuning)")
                 model = SAC.load(str(prev_model_path), env=env, device=args.device)
                 model.tensorboard_log = str(tb_dir)
-                # v29: load 후 seed 재설정 — 같은 init에서 다른 seed로 fine-tune.
-                # SAC.load 후 seed property는 init seed 그대로라 set_random_seed 호출.
+                # SAC.load 후 seed property는 init seed 그대로 — multi-seed fine-tune엔 재설정 필요.
                 if args.seed is not None:
                     model.set_random_seed(args.seed)
                     print(f"[curriculum] seed = {args.seed} (post-load reset)")
             else:
-                # v16-A: NN default [256,256] 회귀. v12에서 도입한 [256,256,128]이
-                # narrow mode 학습 가속하는 부작용 제거. v11이 default NN으로 26% 달성한 만큼
-                # NN 확장은 천장 돌파 카드가 아니었음. reward 카드(v12~v15) 종결 후 architecture
-                # 변수 정리. policy_kwargs 생략 = SB3 default [256, 256].
+                # policy_kwargs 생략 = SB3 default NN [256, 256].
                 model = SAC(
                     "MlpPolicy", env, verbose=1, device=args.device,
                     tensorboard_log=str(tb_dir),
@@ -260,12 +231,8 @@ def main():
             callbacks = []
             if not args.no_viewer:
                 callbacks.append(PolicySnapshotCallback(model_holder, sync_every=500))
-            # v30: best-model checkpoint 항상 활성.
-            # v29 분석으로 모든 seed가 s3d 800~900k peak 후 1M까지 후퇴 확인 →
-            # 학습 끝 model.zip만으로는 진짜 best를 보존 못 함. peak 시점을
-            # model_best.zip로 별도 저장 (학습 끝 model.zip은 그대로 유지).
-            # v26: deterministic check용 env factory (Monitor 안 씌운 raw env).
-            #   stochastic 90% trigger 시 det eval로 진짜 90% 확인 → false positive 차단.
+            # peak 시점 model_best.zip 별도 저장 (후반 후퇴 대비).
+            # deterministic check: stochastic 90% trigger 시 det eval로 진짜 90% 확인 (함정 #13).
             def _det_env_builder(_theta_range=theta_range, _sr=stage["success_radius"],
                                  _ep=ep_sec, _N=ACTION_HISTORY_N):
                 return FishSwimEnv(
@@ -278,15 +245,11 @@ def main():
                 threshold=args.threshold, window=100,
                 check_every=5000, min_steps=args.min_steps,
                 best_save_path=run_dir / "model_best",
-                det_env_fn=_det_env_builder if args.det_check else None,
+                det_env_fn=_det_env_builder,
                 det_episodes=args.det_episodes,
                 det_cooldown_steps=args.det_cooldown_steps,
             ))
-            # v10: stage별 차등 floor. 작은 회전(s3a/b 0.002~0.003)은 정확도, 큰 회전(s3c 0.005,
-            # s3d 0.006)은 비대칭 ctrl 패턴 발견 위해 entropy 유지. v8 0.005·v9 0.002 모두
-            # 한쪽만 만족했던 결과의 종합.
-            # v25-A: stage["ent_floor_end"] 있으면 linear decay schedule.
-            #   decay 구간 = 0 ~ max_steps. 학습 후반 deterministic policy 완성용.
+            # ent_floor_end 있으면 linear decay (0 → max_steps).
             ent_floor_end = stage.get("ent_floor_end")
             decay_end = stage["max_steps"] if ent_floor_end is not None else 0
             callbacks.append(EntCoefFloorCallback(
