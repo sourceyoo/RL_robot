@@ -124,10 +124,10 @@ def main():
     p.add_argument("--device", type=str, default="cuda")
     p.add_argument("--seed", type=int, default=None,
                    help="SAC seed (multi-seed 평가용). 미지정시 SB3 default.")
-    p.add_argument("--tb-tag", type=str, default="model3",
-                   help="tb_logs sub-dir 이름 (multi-seed면 model3_vN_seed{N})")
+    p.add_argument("--tb-tag", type=str, default="m4_v1",
+                   help="tb_logs sub-dir 이름 (multi-seed면 m4_v1_seed{N}). m4 환경 default.")
     p.add_argument("--runs-subdir", type=str, default=None,
-                   help="runs/ 안에서 stage tag prefix (예: vN_seed0 → runs/vN_seed0/s3b_arc30)")
+                   help="runs/ 안에서 stage tag prefix (예: m4_v1_seed0 → runs/m4_v1_seed0/s3b_arc30)")
     p.add_argument("--init-from", type=str, default=None,
                    help="start-stage init 모델 path. None이면 이전 stage model.zip 자동.")
     p.add_argument("--det-episodes", type=int, default=100,
