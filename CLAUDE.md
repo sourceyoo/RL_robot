@@ -161,7 +161,7 @@ ctrl=±1 sine 12초: 1~6 Hz 모든 주파수 −x 전진(1Hz −0.49m, 3Hz −2.
 | 3c | s3c_arc60 | π ± 60° | 0.08 | 30s | 350k |
 | 3d | s3d_arc90 | π ± 90° | 0.08 | 30s | 500k |
 
-multi-seed 예: `python3 curriculum.py --start-stage 4 --end-stage 4 --seed 0 --tb-tag model3_vN_seed0 --runs-subdir vN_seed0`
+multi-seed 예 (m4 환경): `python3 curriculum.py --start-stage 4 --end-stage 4 --seed 0 --tb-tag m4_v1_seed0 --runs-subdir m4_v1_seed0`
 
 ---
 
@@ -171,7 +171,7 @@ multi-seed 예: `python3 curriculum.py --start-stage 4 --end-stage 4 --seed 0 --
 
 ---
 
-## TensorBoard 메트릭 (`tb_logs/model3_vN/`)
+## TensorBoard 메트릭 (`tb_logs/<tag>/`)
 
 `rollout/ep_rew_mean`·`ep_len_mean` / `train/{critic_loss,actor_loss,ent_coef}` / `fish/{success_rate,final_distance,episode_seconds,avg_align}`.
 
