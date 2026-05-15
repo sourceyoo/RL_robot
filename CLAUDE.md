@@ -69,6 +69,12 @@ python3 view_policy.py runs/<tag>/model.zip                       # 정책 viewe
 tensorboard --logdir tb_logs/                                     # 학습 곡선 / SSH 백그라운드: `tmux new -s train` + tee log
 ```
 
+### 학습 시간 (RTX 3090, fps ~305)
+
+s1: ~100초 / s3a~c: 11~19분 / s3d 500k: ~28분 / s3d 1M: ~55분 / 전체: 2~3시간.
+
+병목은 SAC update + Python overhead 98% (env step만 1.4%). 1M step ≈ 1.8M SAC update.
+
 ## 활성 모델 — `sim/rl_fish.xml`
 
 RL이 학습하는 단 하나의 모델. **이 파일이 모든 시뮬·학습의 진입점.**
@@ -119,7 +125,7 @@ Rotor inertia 추정 ~3e-6 kg·m² motor → **armature (output) ≈ 1.4e-4 kg·
 
 xml에서 tail_joint `damping="0.087" armature="1.4e-4"`, actuator `forcerange="-2.2 2.2"`로 spec 직접 반영. wet (현재 fluid on)은 fluid drag 추가로 더 ↓ 자연 cap.
 
-**6Hz freq cap 메커니즘**: PD/armature spec만으론 sim PD 무한 bandwidth로 freq cap 안 됨 (정책이 25Hz까지 ctrl 가능). `fish_env.py` `frame_skip=42` (dt=0.084s = 6Hz peak-to-peak time)로 정책 decision freq 11.9Hz → **Nyquist 5.95Hz cap**. 정책이 매 step alternate해도 max ctrl freq 6Hz. ETH Koumoutsakos lab "action every Tp/2" 패턴 (Verma 2018, Novati 2017) 차용. 실모터 closed-loop control rate(~10~12Hz)와 정합. 외부 reference: `~/research/fish_rl/literature_timestep_fish_rl.md`.
+**6Hz freq cap 메커니즘**: PD/armature spec만으론 sim PD 무한 bandwidth로 freq cap 안 됨 (정책이 25Hz까지 ctrl 가능). `fish_env.py` `frame_skip=42` (dt=0.084s = 6Hz peak-to-peak time)로 정책 decision freq 11.9Hz → **Nyquist 5.95Hz cap**. 정책이 매 step alternate해도 max ctrl freq 6Hz. 실모터 closed-loop control rate(~10~12Hz)와 정합.
 
 ### 추진 검증 (freq_sweep.py)
 
@@ -161,15 +167,7 @@ multi-seed 예: `python3 curriculum.py --start-stage 4 --end-stage 4 --seed 0 --
 
 ## 학습 history·다음 카드 후보
 
-→ [`docs/training_log.md`](docs/training_log.md) (버전별 변경·통찰·RL 카드 함정 #7~·카드 후보·현재 상태). s3d_90 라인(구 v22~v30 분리) → [`docs/s3d_90_line.md`](docs/s3d_90_line.md).
-
-## 외부 literature 참고 (reward·obs 설계)
-
-→ `~/research/fish_rl/literature_single_motor_fish_rl.md` (RL_robot repo 외부) — 단일 모터 BCF + RL 본 표 3편 (Learning Agile · Snake 1D · JBE 2022) + 인접 사례 4편 (Pangasius · μBot · Caudal fin stiffness · Physics-informed RL Nature) 의 reward/obs 패턴 표. **보상·관찰 변경 검토 시 우선 참조.** PDF 모음은 `~/research/fish_rl/papers/03_advanced/single_motor_bcf_rl/` (4편 확보, 3편 미확보).
-
-→ `~/research/fish_rl/github_single_motor_fish_rl.md` — 단일 모터 BCF fish RL 관련 GitHub 코드 정리. **본 표 paper code release 0편 확인**, MuJoCo + RL fish 가장 가까운 사례는 `srl-ethz/fishsim`. 사용자 frame core reference (SB3·Gymnasium·MuJoCo) 의 우선 검토 file 표 포함. **코드 구현 검토·차용 시 우선 참조.**
-
-→ `~/research/fish_rl/analysis_v33_vs_literature.md` — 사용자 v33 코드 (`fish_env.py`·`train.py`·`curriculum.py`) ↔ literature·fishsim 직접 비교. §A 이미 차용 패턴 / §B 높은 ROI 차용 후보 (body-frame obs · IAE-style TB 메트릭 · sim fidelity curriculum) / §C 약한 ROI skip 항목 / §F 함정 점검. **새 reward·obs·algo 카드 제안 시 본 파일 §A~§F 순서대로 참조 후 §G 행동 따름.**
+→ [`docs/training_log.md`](docs/training_log.md) (버전별 변경·통찰·RL 카드 함정 #7~·카드 후보·현재 상태). s3d_90 라인(구 v22~v30 분리) → [`docs/s3d_90_line.md`](docs/s3d_90_line.md). m4 환경(frame_skip 42 + V2 spec) → [`docs/training_log_m4.md`](docs/training_log_m4.md).
 
 ---
 
