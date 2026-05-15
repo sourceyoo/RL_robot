@@ -57,21 +57,25 @@
         <inertial pos="0.05111 0 -0.005349"
                   mass="0.06985"
                   diaginertia="7e-6 5.6e-5 5.4e-5"/>
+        <!-- BL4260 V2 + 24V + 6.8:1 평기어 트레인 spec 등가 (사용자 실측 dry 6Hz @ 2400 rpm 정합):
+             damping (back-EMF KT²/R × N²·η ≈ 0.087 Nm·s/rad) — output speed cap의 본질
+             armature (motor rotor inertia × N² ≈ 1.4e-4 kg·m²) — 가속 limit / high-freq 차단 -->
         <joint name="tail_joint" type="hinge" axis="0 0 -1" range="-0.349066 0.349066"
-               limited="true" solreflimit="0.002 1" solimplimit="0.99 0.999 0.0001"/>
+               limited="true" damping="0.087" armature="1.4e-4"
+               solreflimit="0.002 1" solimplimit="0.99 0.999 0.0001"/>
         <geom pos="-0.144817 0 0.03565" type="mesh" mesh="tail_link"/>
 
         <!-- Ecoflex 00-30 실리콘 fin. CAD MODE_3 사양 그대로 + density 1070.
              CAD에선 fixed joint였지만 실물 실리콘이라 passive hinge로 교체.
              stiffness/damping은 임시값, 정확성 테스트 후 튜닝. -->
-        <body name="fin_1" pos="0.057 0.00075 -0.011375">
-          <inertial pos="0.0772699 -0.0004 0.006001"
+        <body name="fin_1" pos="0.057 0 -0.011375">
+          <inertial pos="0.0772699 0 0.006001"
                     mass="0.01052"
                     diaginertia="1.8e-5 3.1e-5 1.3e-5"/>
           <joint name="fin_joint" type="hinge" axis="0 0 -1"
                  range="-0.524 0.524" stiffness="1e-2" damping="5e-5"
                  limited="true" solreflimit="0.005 1" solimplimit="0.95 0.99 0.001"/>
-          <geom pos="-0.201817 -0.00075 0.047025"
+          <geom pos="-0.201817 0 0.047025"
                 type="mesh" mesh="fin_1"
                 density="1070" material="silicone"/>
         </body>
@@ -80,10 +84,10 @@
   </worldbody>
 
   <actuator>
-    <!-- BL4260 브러시리스 + 평기어 트레인 (continuous 영역).
-         kp/kv는 ±20° 추종 + 오버슈트 억제. forcerange는 BL4260 연속 출력. -->
+    <!-- BL4260 V2 24V + 6.8:1 평기어 트레인. forcerange = stall torque output (V2: 409 mNm × 6.8 × η0.8).
+         kp/kv는 ±20° 추종 + 오버슈트 억제. -->
     <position name="tail" joint="tail_joint" ctrlrange="-1 1" gear="0.349"
-              kp="100" kv="5" forcerange="-3 3"/>
+              kp="100" kv="5" forcerange="-2.2 2.2"/>
   </actuator>
 
   <sensor>
