@@ -155,6 +155,32 @@ m4_v1 첫 학습. 환경 변경 (fluidcoef + integrator + ep_sec + progress·3.6
 - **m4_v1-A** progress weight ablation — 15 그대로 vs 3.6 학습 차이 (학습 속도·sample efficiency)
 - **fluidcoef 분리** — `<default>` 빼고 tail/fin geom에만 적용 → 추진 속도 회복
 
+### m4_v1 (2026-05-16) — Stage 3b fine-tune
+
+init = `runs/m4_v1_seed{N}/s3a_arc15/model.zip` (s3a 졸업 직후).
+
+**3 seed × Stage 3b (s3b_arc30) 학습 결과**:
+
+| seed | 졸업 step | 학습 시간 | TB stochastic 100ep | det eval 100ep |
+|---|---|---|---|---|
+| 0 | 250k | 36분 | 93% | 98/100 |
+| 1 | 470k | 49분 | 94% | 94/100 |
+| 2 | 230k | 34분 | 99% | 99/100 |
+| **mean** | **317k** | **40분** | — | **97.0 ± 2.2%** ✓ |
+
+**6 stage deterministic eval (post-Stage 3b)**:
+
+| Stage | seed 0 | seed 1 | seed 2 | **mean ± σ** | s3a 정책 대비 |
+|---|---|---|---|---|---|
+| s1_forward | 100% | 100% | 100% | **100.0% ± 0.0%** ✓ | 유지 |
+| s2_anchor | 100% | 100% | 100% | **100.0% ± 0.0%** ✓ | 유지 |
+| s3a_arc15 | 100% | 100% | 100% | **100.0% ± 0.0%** ✓ | 99.0% → +1%p (더 안정) |
+| **s3b_arc30** | **98%** | **94%** | **99%** | **97.0% ± 2.2%** ✓ **졸업** | 55.7% → **+41%p** |
+| s3c_arc60 | 60% | 50% | 55% | 55.0% ± 4.1% | 28.0% → **+27%p** (일반화) |
+| s3d_arc90 | 41% | 37% | 38% | 38.7% ± 1.7% | 16.7% → **+22%p** (일반화) |
+
+---
+
 ### m4_v1 (Stage 3a 졸업·회전 일반화)
 
 m4_v1 s1 정책 init → s3a fine-tune (3 seed 병렬, max_steps 1M cap).
@@ -182,3 +208,30 @@ m4_v1 s1 정책 init → s3a fine-tune (3 seed 병렬, max_steps 1M cap).
 - **m4_v1 Stage 3b** 학습 — init = s3a model, ±30° 목표. s3b 55%에서 90% 졸업 시도.
 - **m4_v1 Stage 3c** 직행 — s3b 자연 향상이라 skip 가능 여부 (사용자 결정)
 - **fluidcoef 분리** — base_link drag 부작용 제거 → 추진 속도 회복 (회전 학습 더 쉬울 수 있음)
+
+### m4_v1 (Stage 3b 졸업·v33 천장 돌파·큰 일반화)
+
+m4_v1 s3a 졸업 모델 init → s3b fine-tune (3 seed 병렬, ±30°).
+
+**핵심 결과**:
+- 3 seed 모두 **230k~470k step에 졸업** (mean 317k, det 94~99%). v33 s3b 졸업 step 654k 대비 절반.
+- **v33 s3b 천장 (80~86%) 자연 돌파** — m4 환경 변경 (frame_skip 42 + V2 spec + fluidcoef + progress·3.6 + ep_sec 60s)이 천장 해소. v33은 multi-axis 누적(yaw reward·progress·15·sign-aware 등)으로 86%까지 만든 카드였는데 m4_v1은 첫 시도에 97%.
+- **forgetting 없음** — s1·s2·s3a 모두 100%.
+- **σ 2.2%p** — v33 (5.4~11.4%p) 대비 매우 안정.
+
+**v33 천장 돌파 가설**:
+1. `frame_skip 42` (Nyquist 6Hz cap): 정책이 비현실적 high-freq pattern 학습 불가 → 더 robust한 swimming policy
+2. `V2 spec` (damping 0.087, armature 1.4e-4, forcerange ±2.2): motor 본연 한계 sim에 반영 → sim2real 정합
+3. `fluidcoef` 강화: fluid 영향 의미 있게 학습 신호에 전달
+4. `progress·3.6` (dt 보정): reward scale 통일로 SAC critic Q 안정
+5. `ep_sec 60s` (이전 30s × 2): 정책이 회전 + 도달까지 충분한 학습 시간
+
+**큰 일반화 효과** ⭐⭐:
+- s3c (±60°): 28.0% → **55.0%** (+27%p) — s3a 학습 시(+16%p)보다 큰 transfer
+- s3d (±90°): 16.7% → **38.7%** (+22%p) — s3a 학습 시(+10%p)보다 큰 transfer
+- 즉 ±30° 학습이 ±60°·±90°로 더 효율적으로 일반화 (curriculum learning 효과 누적)
+
+**다음 카드 후보**:
+- **m4_v1 Stage 3c** 학습 — init = s3b model, ±60° 목표. baseline 55%에서 90% 졸업 시도.
+- **m4_v1 Stage 3d 직행** — s3c 일반화 효과 확인 후 결정. s3b로도 s3d 38%까지 향상.
+- **fluidcoef 분리** — 추진력 회복으로 s3c·s3d 더 쉬워질 수 있음 (단 현재 진행 잘 됨이라 우선순위 ↓)
