@@ -63,6 +63,8 @@ dry/wet 차이 보정 + reward scale 정합 + ep_sec 보정.
 | **dry/wet xdisp 비율** | **10×** | **300×** | **사용자 의도 "유의미한 차이" ✓** |
 | yaw rate (sine + bias) | 4.6°/s | 1.27°/s | 1/3.6 ↓ — ep_sec 60s × 1.27 = 76° 회전 여유 |
 | Stage 1 도달 (단순 sine) | 모든 freq | **1Hz도 ep 20s 안에** ✓ | ep_sec 보정 효과 |
+| **정책 ctrl freq** (m4_v1 학습 후) | — | **5.88~5.95Hz peak, ≤6Hz 100%** ✓ | Nyquist cap 완벽 준수 |
+| tail qpos freq (inner mj_step, 500Hz 샘플링) | — | ≤6Hz 99% + ZOH harmonics 1% (17.9·29.8Hz) | 정책 step input의 자연 부산물 (실모터 PWM 동일) |
 
 ---
 
@@ -90,6 +92,32 @@ dry/wet 차이 보정 + reward scale 정합 + ep_sec 보정.
 | s3b_arc30 | 32% | 30% | 33% | 31.7% ± 1.2% |
 | s3c_arc60 | 12% | 11% | 13% | 12.0% ± 0.8% |
 | s3d_arc90 | 6% | 7% | 7% | 6.7% ± 0.5% |
+
+### m4_v1 (2026-05-16) — Stage 3a fine-tune
+
+init = `runs/m4_v1_seed{N}/s1_forward/model.zip` (Stage 1 학습 직후, s2 자연 100%이라 skip).
+
+**3 seed × Stage 3a (s3a_arc15) 학습 결과**:
+
+| seed | 졸업 step | 학습 시간 | TB stochastic 100ep | det eval 100ep |
+|---|---|---|---|---|
+| 0 | 285k | 32분 | 100% | 100/100 |
+| 1 | 375k | 37분 | 100% | 98/100 |
+| 2 | 75k | 10.6분 | 94% | 99/100 |
+| **mean** | **245k** | **26.5분** | — | **99.0 ± 0.8%** ✓ |
+
+학습 명령: `python3 curriculum.py --start-stage 3 --end-stage 3 --seed {0,1,2} --tb-tag m4_v1_seed{0,1,2} --runs-subdir m4_v1_seed{0,1,2} --init-from runs/m4_v1_seed{0,1,2}/s1_forward/model.zip --no-viewer` (3 seed 병렬 background).
+
+**6 stage deterministic eval (post-Stage 3a)**:
+
+| Stage | seed 0 | seed 1 | seed 2 | **mean ± σ** | s1 정책 대비 |
+|---|---|---|---|---|---|
+| s1_forward | 100% | 100% | 100% | **100.0% ± 0.0%** ✓ | 100% 유지 (forgetting X) |
+| s2_anchor | 100% | 100% | 100% | **100.0% ± 0.0%** ✓ | 100% 유지 |
+| **s3a_arc15** | **100%** | **98%** | **99%** | **99.0% ± 0.8%** ✓ **졸업** | 61.0% → **+38%p** |
+| s3b_arc30 | 55% | 57% | 55% | 55.7% ± 0.9% | 31.7% → **+24%p** (일반화 효과) |
+| s3c_arc60 | 29% | 27% | 28% | 28.0% ± 0.8% | 12.0% → **+16%p** |
+| s3d_arc90 | 16% | 17% | 17% | 16.7% ± 0.5% | 6.7% → **+10%p** |
 
 ---
 
@@ -126,3 +154,31 @@ m4_v1 첫 학습. 환경 변경 (fluidcoef + integrator + ep_sec + progress·3.6
 - **m4_v2-A** Stage 3a 학습 — init = m4_v1_seedN s1_forward, sr 0.08, ±15°. 회전 능력 학습 첫 점.
 - **m4_v1-A** progress weight ablation — 15 그대로 vs 3.6 학습 차이 (학습 속도·sample efficiency)
 - **fluidcoef 분리** — `<default>` 빼고 tail/fin geom에만 적용 → 추진 속도 회복
+
+### m4_v1 (Stage 3a 졸업·회전 일반화)
+
+m4_v1 s1 정책 init → s3a fine-tune (3 seed 병렬, max_steps 1M cap).
+
+**핵심 결과**:
+- 3 seed 모두 **75k~375k step에 졸업** (mean 245k, det 98~100%). seed 2는 outlier로 10.6분 만에 졸업.
+- 졸업 step 분산 큼 (75k vs 375k, 5× 차이) — seed 운으로 학습 trajectory 다양.
+- **forgetting 없음** — s1·s2 100% 유지.
+- **σ ≤ 0.9%p** — m4 환경 안정성 재확인.
+
+**회전 능력 일반화** ⭐:
+- s3a 학습이 더 큰 회전 stage로 자연 transfer
+  - s3b (±30°): 31.7% → **55.7%** (+24%p)
+  - s3c (±60°): 12.0% → **28.0%** (+16%p)
+  - s3d (±90°): 6.7% → **16.7%** (+10%p)
+- 직진 정책만으로는 s3b 31%만 가능했던 게 ±15° 회전 학습으로 ±30°·±60°·±90° 모두 향상.
+- 단 s3b 55%는 아직 90% 미달 → 직접 s3b 학습 필요. s3c·s3d는 더 큰 회전 learning 필요.
+
+**V1 정책 freq 측정 (학습 전 검증)**:
+- 정책 ctrl 신호 5.88~5.95Hz peak, **≤6Hz 100%** ✓ (Nyquist 6Hz cap 완벽 준수)
+- tail qpos (inner mj_step, 500Hz 샘플링): ≤6Hz **99%** + ZOH harmonics 1% (17.9Hz·29.8Hz)
+- harmonic은 정책 step input (0.084s마다 ZOH)의 자연 부산물 — 실모터 PWM·step input도 동일 spectrum. sim2real 영향 X.
+
+**다음 카드 후보**:
+- **m4_v1 Stage 3b** 학습 — init = s3a model, ±30° 목표. s3b 55%에서 90% 졸업 시도.
+- **m4_v1 Stage 3c** 직행 — s3b 자연 향상이라 skip 가능 여부 (사용자 결정)
+- **fluidcoef 분리** — base_link drag 부작용 제거 → 추진 속도 회복 (회전 학습 더 쉬울 수 있음)
