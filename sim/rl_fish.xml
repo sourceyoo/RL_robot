@@ -1,7 +1,7 @@
 <mujoco model="rl_fish">
   <compiler angle="radian" meshdir="../fish_urdf/RL_SIM_MODE_3_description/meshes/"/>
 
-  <option timestep="0.002" integrator="implicit" density="1000" viscosity="0.001">
+  <option timestep="0.002" integrator="implicitfast" density="1000" viscosity="0.001">
     <flag gravity="disable"/>
   </option>
 
@@ -25,7 +25,10 @@
   </asset>
 
   <default>
-    <geom material="pla" fluidshape="ellipsoid"/>
+    <!-- fluidcoef = [blunt_drag, slender_drag, angular_drag, kutta_lift, magnus_lift]
+         fishsim (ETH SRL) BO sysid 정합 + KU_FISH 형상 보수화: slender drag 12× ↑로
+         wet amp ↓ (사용자 의도), Kutta lift default 유지로 추진(xdisp) 보존. -->
+    <geom material="pla" fluidshape="ellipsoid" fluidcoef="0.4 3.0 2.81 1.0 0.27"/>
     <joint damping="0.005" armature="0.0001"/>
   </default>
 

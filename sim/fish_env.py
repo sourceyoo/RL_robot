@@ -16,7 +16,7 @@ qvel layout (5): [vx, vy, vyaw, vtail, vfin]
 
 행동 (1차원): tail motor ctrl ∈ [-1, 1].
 
-보상 (v33): progress·15 + reach·10 + align_weight·align
+보상 (m4_v1): progress·3.6 + reach·10 + align_weight·align
       + YAW_SIGN_W·yaw_rate·sign(yaw_err)
       − ACTION_DIFF_W·(ctrl_t − ctrl_{t−1})²
       − TIME_PEN_W·distance·current_time.
@@ -187,7 +187,9 @@ class FishSwimEnv(gym.Env):
         action_diff = (ctrl_now - self._prev_ctrl) ** 2
         current_time = self._step_count * self.dt
         reward = (
-            float(progress * 15.0)
+            # m4 (dt=0.084s)는 m1 (dt=0.02s) 대비 step당 progress 4.2× ↑.
+            # literature 권고로 weight 비례 축소 (15 → 15/4.2 ≈ 3.6) — reward magnitude 통일.
+            float(progress * 3.6)
             + (10.0 if reached else 0.0)
             + self.align_weight * align
             + YAW_SIGN_W * yaw_rate * yaw_err_sign

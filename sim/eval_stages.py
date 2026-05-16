@@ -18,12 +18,13 @@ PI = math.pi
 ACTION_HISTORY_N = 20
 
 STAGES = [
-    {"tag": "s1_forward", "theta": (PI, PI),                       "radius": 0.08, "ep_sec": 10.0},
-    {"tag": "s2_anchor",  "theta": (PI, PI),                       "radius": 0.04, "ep_sec": 10.0},
-    {"tag": "s3a_arc15",  "theta": (PI - PI/12, PI + PI/12),       "radius": 0.08, "ep_sec": 30.0},
-    {"tag": "s3b_arc30",  "theta": (PI - PI/6,  PI + PI/6),        "radius": 0.08, "ep_sec": 30.0},
-    {"tag": "s3c_arc60",  "theta": (PI - PI/3,  PI + PI/3),        "radius": 0.08, "ep_sec": 30.0},
-    {"tag": "s3d_arc90",  "theta": (PI/2,        3*PI/2),          "radius": 0.08, "ep_sec": 30.0},
+    # ep_sec은 curriculum.py STAGES와 sync (m4 환경: s1/s2 20s, s3a~d 60s).
+    {"tag": "s1_forward", "theta": (PI, PI),                       "radius": 0.08, "ep_sec": 20.0},
+    {"tag": "s2_anchor",  "theta": (PI, PI),                       "radius": 0.04, "ep_sec": 20.0},
+    {"tag": "s3a_arc15",  "theta": (PI - PI/12, PI + PI/12),       "radius": 0.08, "ep_sec": 60.0},
+    {"tag": "s3b_arc30",  "theta": (PI - PI/6,  PI + PI/6),        "radius": 0.08, "ep_sec": 60.0},
+    {"tag": "s3c_arc60",  "theta": (PI - PI/3,  PI + PI/3),        "radius": 0.08, "ep_sec": 60.0},
+    {"tag": "s3d_arc90",  "theta": (PI/2,        3*PI/2),          "radius": 0.08, "ep_sec": 60.0},
 ]
 
 

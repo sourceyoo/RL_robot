@@ -53,7 +53,8 @@ STAGES = [
         "desc": "Stage 1 — 직진 (target θ=π fixed)",
         "theta_min": PI, "theta_max": PI,
         "success_radius": 0.08,
-        "max_steps": 400_000,
+        "max_steps": 1_000_000,
+        "episode_seconds": 20.0,
         "ent_floor": 0.002,
     },
     {
@@ -61,17 +62,19 @@ STAGES = [
         "desc": "Stage 2 — 안착 (success_radius 0.04)",
         "theta_min": PI, "theta_max": PI,
         "success_radius": 0.04,
-        "max_steps": 400_000,
+        "max_steps": 1_000_000,
+        "episode_seconds": 20.0,
         "ent_floor": 0.002,
     },
-    # Stage 3 전체 ep_seconds 30s: yaw_test.py D2 4.6°/s × 30s = 138° 회전 여유.
+    # Stage 3 전체 ep_seconds 60s: m4 fluidcoef 변경 후 추진 속도 ~50%↓·yaw rate 1/3.6↓
+    # 보정 (이전 30s에서 2배). yaw rate 1.27°/s × 60s = 76° 회전 여유.
     {
         "tag": "s3a_arc15",
         "desc": "Stage 3a — 좌우 ±15° (θ ∈ π ± π/12)",
         "theta_min": PI - PI / 12, "theta_max": PI + PI / 12,
         "success_radius": 0.08,
-        "max_steps": 200_000,
-        "episode_seconds": 30.0,
+        "max_steps": 1_000_000,
+        "episode_seconds": 60.0,
         "ent_floor": 0.002,
     },
     {
@@ -80,7 +83,7 @@ STAGES = [
         "theta_min": PI - PI / 6, "theta_max": PI + PI / 6,
         "success_radius": 0.08,
         "max_steps": 1_000_000,
-        "episode_seconds": 30.0,
+        "episode_seconds": 60.0,
         "ent_floor": 0.003,
         # ent_floor linear decay 0.003 → 0: 학습 후반 deterministic policy 수렴.
         # stochastic-deterministic gap 좁히기 (함정 #13 대응).
@@ -92,7 +95,7 @@ STAGES = [
         "theta_min": PI - PI / 3, "theta_max": PI + PI / 3,
         "success_radius": 0.08,
         "max_steps": 1_000_000,
-        "episode_seconds": 30.0,
+        "episode_seconds": 60.0,
         # 큰 회전: floor ↑로 narrow mode 깨고 비대칭 ctrl 탐색.
         "ent_floor": 0.008,
     },
@@ -102,7 +105,7 @@ STAGES = [
         "theta_min": PI / 2, "theta_max": 3 * PI / 2,
         "success_radius": 0.08,
         "max_steps": 1_000_000,
-        "episode_seconds": 30.0,
+        "episode_seconds": 60.0,
         "ent_floor": 0.010,
     },
 ]

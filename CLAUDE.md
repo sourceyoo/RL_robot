@@ -154,12 +154,15 @@ ctrl=±1 sine 12초: 1~6 Hz 모든 주파수 −x 전진(1Hz −0.49m, 3Hz −2.
 
 | Stage | tag | theta | sr | ep_sec | max_steps |
 |---|---|---|---|---|---|
-| 1 | s1_forward | π fixed | 0.08 | 10s | 400k |
-| 2 | s2_anchor | π fixed | 0.04 | 10s | 400k |
-| 3a | s3a_arc15 | π ± 15° | 0.08 | 30s | 200k |
-| 3b | s3b_arc30 | π ± 30° | 0.08 | 30s | **1M (v22~)** |
-| 3c | s3c_arc60 | π ± 60° | 0.08 | 30s | 350k |
-| 3d | s3d_arc90 | π ± 90° | 0.08 | 30s | 500k |
+| 1 | s1_forward | π fixed | 0.08 | 20s | 1M |
+| 2 | s2_anchor | π fixed | 0.04 | 20s | 1M |
+| 3a | s3a_arc15 | π ± 15° | 0.08 | 60s | 1M |
+| 3b | s3b_arc30 | π ± 30° | 0.08 | 60s | 1M |
+| 3c | s3c_arc60 | π ± 60° | 0.08 | 60s | 1M |
+| 3d | s3d_arc90 | π ± 90° | 0.08 | 60s | 1M |
+
+> max_steps는 안전장치(도달 못해도 강제 진행) — `CurriculumStopCallback`이 90% 졸업 시 조기 종료.
+> ep_sec은 m4 환경(fluidcoef·frame_skip 적용)의 추진 속도 ~50%↓·yaw rate ↓ 보정 (s1·s2 10s→20s, s3a~d 30s→60s).
 
 multi-seed 예 (m4 환경): `python3 curriculum.py --start-stage 4 --end-stage 4 --seed 0 --tb-tag m4_v1_seed0 --runs-subdir m4_v1_seed0`
 
