@@ -16,13 +16,17 @@ qvel layout (5): [vx, vy, vyaw, vtail, vfin]
 
 행동 (1차원): tail motor ctrl ∈ [-1, 1].
 
-보상 (m4_v1): progress·3.6 + reach·10 + align_weight·align
+보상 (m4_v8): progress·3.6 + reach·10 + align_weight·align
       + YAW_SIGN_W·yaw_rate·sign(yaw_err)
       − ACTION_DIFF_W·(ctrl_t − ctrl_{t−1})²
+      − DC_PEN_W·|window_mean|   (m4_v8: mean² → |mean| linear, 약 B 영역 강화)
+      + ASYM_BONUS_W·max(0, target_sign·sf_signed − 0.05)
+      + AMP_ASYM_W·max(0, target_sign·amp_signed − 0.1)
       − TIME_PEN_W·distance·current_time.
   - align_weight: 10s ep 0.02, 30s ep 0.012.
-  - YAW_SIGN_W = 0.005 (target 방향 회전만 +). YAW_W·|ω| 제거 (v33, literature 무근거 + 제자리 회전 incentive).
-  - ACTION_DIFF_W = 0.001 (Learning Agile ‖J̇‖² 등가). ctrl_cost 제거 (v33, smoothness 신호 형태 교체).
+  - ACTION_DIFF_W = 0.01, DC_PEN_W = 0.05 (m4_v3 효과 유지).
+  - ASYM_BONUS_W = 0.02, AMP_ASYM_W = 0.01 (m4_v7 signed 변형 — target sign 정합만 보상).
+  - m4_v7: m4_v6 hack 교정 (F 학습 ✓ but 방향 잘못 → 미도달). signed 식으로 방향 정렬 강제. 직진(=π)에선 target_sign=0이라 bonus 0.
   - TIME_PEN_W = 1e-5 (Pangasius ϕ·d·t). 천천히 떠도는 mode 억제.
   - 가산식 (곱셈은 mode collapse — 함정 #7).
   - align ∈ [-1, +1] (cos(머리, 목표)).
@@ -100,6 +104,12 @@ class FishSwimEnv(gym.Env):
         self._step_count = 0
         self._prev_distance = 0.0
         self._prev_ctrl = 0.0
+        # m4_v3: B mode (DC offset) 제거용 window state. 12 step ≈ 1초.
+        # window mean² penalty → B는 발생 비싸게, D wagging (mean≈0)은 영향 X.
+        self._ctrl_window_size = 12
+        self._ctrl_window = np.zeros(self._ctrl_window_size, dtype=np.float64)
+        # m4_v7: target 방향 sign (signed asym bonus용). reset()에서 결정.
+        self._target_sign = 0.0
 
     def _torso_pos(self) -> np.ndarray:
         return self.data.site_xpos[self._torso_site_id].copy()
@@ -146,11 +156,18 @@ class FishSwimEnv(gym.Env):
                            self.target_radius * np.sin(theta),
                            0.0])
         self.model.geom_pos[self._target_geom_id] = target
+        # m4_v7: target sign (signed asym bonus 정합 판정용).
+        # f_sweep 검증: sf_signed>0 (+slow) → head -y 회전. target_y = R·sin(theta).
+        # theta>π → sin<0 → target_y<0 → -y 회전 필요 → sf_signed>0 정합 → target_sign +1
+        # theta<π → sin>0 → target_y>0 → +y 회전 필요 → sf_signed<0 정합 → target_sign -1
+        # 즉 정합 = target_sign · sf_signed > 0. theta=π (직진)면 sign=0 (bonus 0).
+        self._target_sign = float(np.sign(theta - np.pi))
 
         mujoco.mj_forward(self.model, self.data)
         self._step_count = 0
         self._prev_distance = self._distance_to_target()
         self._prev_ctrl = 0.0
+        self._ctrl_window = np.zeros(self._ctrl_window_size, dtype=np.float64)
         if self.action_history_n > 0:
             self._action_history = np.zeros(self.action_history_n, dtype=np.float32)
         return self._get_obs(), {}
@@ -180,11 +197,32 @@ class FishSwimEnv(gym.Env):
         yaw_err_sign = float(np.sign(head_dir[0] * rel[1] - head_dir[1] * rel[0])) if rel_norm > 1e-6 else 0.0
 
         YAW_SIGN_W = 0.005
-        ACTION_DIFF_W = 0.001
+        ACTION_DIFF_W = 0.01  # m4_v2: 0.001 → 0.01 (10×)
+        DC_PEN_W = 0.05       # m4_v3: B mode 제거. window mean² penalty
+        ASYM_BONUS_W = 0.02   # m4_v7: signed sf asym (target sign 정합 시만)
+        AMP_ASYM_W = 0.01     # m4_v7: signed amp asym (target sign 정합 시만)
         TIME_PEN_W = 1e-5
         yaw_rate = float(self.data.qvel[IDX_YAW])
         ctrl_now = float(clipped[0])
         action_diff = (ctrl_now - self._prev_ctrl) ** 2
+        # m4_v7: window + DC penalty + signed asym/amp bonus (target sign 정합만 +)
+        self._ctrl_window[:-1] = self._ctrl_window[1:]
+        self._ctrl_window[-1] = ctrl_now
+        window_mean = float(self._ctrl_window.mean())
+        warmup_ok = self._step_count >= self._ctrl_window_size
+        dc_pen = abs(window_mean) if warmup_ok else 0.0  # m4_v8: mean² → |mean| (약 B 영역 강화)
+        ctrl_ac = self._ctrl_window - window_mean
+        sf_proxy = float((ctrl_ac > 0).sum()) / self._ctrl_window_size
+        sf_signed = sf_proxy - 0.5  # +면 +sweep 시간 길음
+        max_pos = max(0.0, float(ctrl_ac.max()))
+        max_neg = max(0.0, float(-ctrl_ac.min()))
+        amp_signed = max_pos - max_neg  # +면 +쪽 진폭 큼
+        # m4_v7 signed: target_sign과 부호 일치 시만 bonus.
+        # 직진 (target_sign=0): bonus 0 (정합 의미 없음).
+        asym_match = self._target_sign * sf_signed
+        amp_match = self._target_sign * amp_signed
+        asym_signed_bonus = max(0.0, asym_match - 0.05) if warmup_ok else 0.0
+        amp_signed_bonus = max(0.0, amp_match - 0.1) if warmup_ok else 0.0
         current_time = self._step_count * self.dt
         reward = (
             # m4 (dt=0.084s)는 m1 (dt=0.02s) 대비 step당 progress 4.2× ↑.
@@ -194,6 +232,9 @@ class FishSwimEnv(gym.Env):
             + self.align_weight * align
             + YAW_SIGN_W * yaw_rate * yaw_err_sign
             - ACTION_DIFF_W * action_diff
+            - DC_PEN_W * dc_pen
+            + ASYM_BONUS_W * asym_signed_bonus
+            + AMP_ASYM_W * amp_signed_bonus
             - TIME_PEN_W * distance * current_time
         )
 

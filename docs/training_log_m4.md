@@ -235,3 +235,106 @@ m4_v1 s3a 졸업 모델 init → s3b fine-tune (3 seed 병렬, ±30°).
 - **m4_v1 Stage 3c** 학습 — init = s3b model, ±60° 목표. baseline 55%에서 90% 졸업 시도.
 - **m4_v1 Stage 3d 직행** — s3c 일반화 효과 확인 후 결정. s3b로도 s3d 38%까지 향상.
 - **fluidcoef 분리** — 추진력 회복으로 s3c·s3d 더 쉬워질 수 있음 (단 현재 진행 잘 됨이라 우선순위 ↓)
+
+---
+
+## m4_v3~v8 — B mode 제거 reward sweep (2026-05-17, 4 cycle)
+
+### 사용자 본질 정의
+- **F mode** = carangiform sweep 시간 비대칭 (한 cycle 안 +sweep/−sweep 시간 다름, power/recovery stroke)
+- **D mode** = 매 step ±1 toggle (5.95Hz Nyquist cap wagging) — 직진에 최적
+- **B mode** = sine + DC offset (mean ctrl ≠ 0, tail 한쪽 편향) — 추진 X + 회전 비효율 → **제거 대상**
+
+### Reward shaping sweep (`sim/fish_env.py`)
+
+기존 m4_v2 baseline에 cycle별로 누적:
+
+| version | 변경 | s3a ±15° 결과 (3 seed × ±15° 6 runs) |
+|---|---|---|
+| m4_v3 | DC_PEN_W=0.05 (`window_mean²`, 12 step 윈도우) | F 2/6 (방향 무관 sf) |
+| m4_v6 | + ASYM_BONUS_W=0.02 unsigned + AMP_ASYM_W=0.01 unsigned | F 2/6, 단 방향 정합 0/2 ✗ (hack) |
+| m4_v7 | signed (`target_sign · sf_signed`, `target_sign · amp_signed`) | F 2/6 정합 2/2 ✓ but 약 B 1/6 발생 |
+| **m4_v8** | DC linear `|window_mean|` (mean² → \|mean\| 강화) | **도달 6/6 ✓, 약 B 0/6 ✓** but F 정합 0/2 ✗ |
+
+핵심 코드 (m4_v8 최종, `sim/fish_env.py`):
+```python
+DC_PEN_W=0.05; ASYM_BONUS_W=0.02; AMP_ASYM_W=0.01
+self._ctrl_window[:-1] = self._ctrl_window[1:]; self._ctrl_window[-1] = ctrl_now
+window_mean = float(self._ctrl_window.mean())
+dc_pen = abs(window_mean)                             # m4_v8 linear
+ctrl_ac = self._ctrl_window - window_mean
+sf_signed = (ctrl_ac>0).sum()/12 - 0.5
+amp_signed = max(0, ctrl_ac.max()) - max(0, -ctrl_ac.min())
+asym_match = self._target_sign * sf_signed             # target_sign=sign(theta-π)
+asym_signed_bonus = max(0, asym_match - 0.05)
+amp_signed_bonus  = max(0, target_sign*amp_signed - 0.1)
+```
+
+`reset()`: `self._target_sign = float(np.sign(theta - np.pi))` — 직진(=π)은 0, signed bonus 0.
+
+### m4_v8 (DC linear + signed asym/amp, fine-tune from m4_v2 s1)
+
+s3a 9 runs (3 seed × 0°/±15°) — `runs/m4_v8_seed{0,1,2}/s3a_arc15/model.zip`. ~29분 학습 (3 seed 병렬, 조기 졸업).
+
+**결과 (확장 metric 재측정 후)**:
+- 도달 9/9 ✓ (직진 3/3, ±15° 회전 6/6)
+- B (|DC|>0.5) 0/9 ✓, 약 B (|DC|>0.3) 0/9 ✓ (m4_v7 약 B 1/6 → 강화)
+- F 학습 (sf_dev≥0.1) 2/6 (seed0/1 +15°), **F 방향 정합 0/2 ✗** (signed bonus 약화)
+- yaw 방향 정합 0/6 (head가 target 향함 X)
+- side-slip 확장: slip 평균 17~25°, align_final < 0.7 회전 6/6 — head 정렬 X. 강 side-slip (slip>30°) 1/9뿐 → **mixed mode 8/9 (D wagging + 미세 lateral drift + head 정렬 부족)**
+
+**core insight**: ±15° target은 거의 -x 직선 (옆 ±0.13m). D 직진 추진 + DC offset/asym 미세 lateral drift로 도달. yaw 무관. → **회전 mechanism 학습 X, weak benchmark**.
+
+### m4_v8b (m4_v8 reward 그대로, fresh s1→s3b)
+
+m4_v8 reward 그대로 (`sim/fish_env.py` 수정 X) s1부터 fresh 학습. tag `m4_v8b_seed{0,1,2}`. ~91분 (3 seed 병렬, 4 stage 자동 진행 `--start-stage 1 --end-stage 4`).
+
+**결과 (각 stage 졸업 model 측정)**:
+| stage | 도달 | F 학습 | side-slip | mixed | F/D 회전 ✓ |
+|---|---|---|---|---|---|
+| s1 (직진, 3 runs) | 3/3 ✓ | - | 0/3 | 3/3 | 0/3 (head wobble) |
+| s2 (sr 0.04, 3 runs) | 3/3 ✓ | - | 0/3 | 3/3 | 0/3 |
+| s3a ±15° (9 runs) | 6/9 (회전 3/6) | 6/6 | 0/9 | 9/9 | 0/9 |
+| **s3b ±30°** (9 runs) | **8/9** (회전 5/6) | 4/6 (정합 0/6) | **3/6 회전** | 6/9 | **0/9** |
+
+**s3b 회전 6 runs**: yaw ±14~17° 크기 회전 ✓ (회전 mechanism trigger), 단:
+- side-slip ✗ 3/6 (slip 36~38°, head align ≤ 0.24)
+- mixed 3/6 (slip 25~28°, align 0.48~0.58)
+- F 방향 정합 0/6 (sf_signed 부호 ≠ target_sign)
+- B 차단 후퇴: |DC|>0.3 2/6 (DC linear penalty fresh 학습에서 효과 ↓)
+- y_disp ±0.17m (target_y 정합) → 도달은 head 정렬 없이 side-slip + 약 B 혼합
+
+### m4_v8 vs m4_v8b 비교 (같은 reward, 다른 init)
+
+| 지표 | m4_v8 (fine-tune from m4_v2 s1) | m4_v8b (fresh s1) |
+|---|---|---|
+| s3a 회전 도달 | 6/6 ✓ | 3/6 (후퇴) |
+| s3b 회전 도달 | - | 5/6 |
+| F 학습 (sf_dev≥0.1) | 2/6 | 4/6 ↑ |
+| **F 방향 정합** | 0/6 | 0/6 (둘 다 X) |
+| 약 B (\|DC\|>0.3) | 0/6 ✓ | 2/6 후퇴 |
+| side-slip ✗ | 1/9 | 3/9 ↑ |
+| F/D 회전 ✓ | 0/9 | 0/9 |
+
+### 결론 (cycle 4 sweep 종료)
+
+1. **단순 reward shaping (DC penalty + signed asym/amp)로 진짜 F/D 회전 학습 trigger 불가** — 4 cycle (m4_v3~v8) + init 변경 (m4_v8b) 모두 F 방향 정합 ≤ 2/6.
+2. **m4_v8b fresh = 회전 mechanism은 trigger ✓** (yaw ±14~17°), 단 mechanism = side-slip + 약 B + 비대칭 sweep 혼합. head 정렬·F 정합 X.
+3. **s3b가 진짜 검증대** — s3a는 target offset 작아 D 직진 + lateral drift로 도달 가능, s3b는 회전 mechanism 강제됨.
+
+### 측정 도구 확장 (`sim/analyze_policy.py`)
+
+기존 ctrl pattern (slow_frac, DC, step_rate)에 더해 trajectory 매 step 측정:
+- `slip_angle[t]` = acos(head_dir · vel_dir) per step
+- `slip_mean`·`slip_max`
+- `head_target_align_final` = 마지막 20 step head·target_dir 평균
+- `yaw_oscillation` = (yaw_max - yaw_min) / |yaw_total|
+- 진행 mode 판정: slip<15°+align>0.7 → "F/D 회전 ✓", slip>30° → "side-slip ✗", 그 외 "mixed"
+
+### 다음 카드 후보 (m4_v9)
+
+- A. **head align reward ↑** — current align_weight (10s ep 0.02, 30s+ ep 0.012) 증액으로 head 정렬 학습 압력 ↑
+- B. **side-slip 직접 penalty** — env에 `slip_angle > 30°` penalty 추가
+- C. **frame_skip ↑** (42 → 60) — D wagging 추진력 약화 → F 압력 ↑
+- D. **action wrap (F 강제)** — env가 sin(α·t + φ_offset) 자체 명령으로 wrap → "emergent 유지" 원칙 위배 단 최후 수단
+- E. **종료 + s3c 진행** — m4_v1 s3b 모델 (v33 천장 돌파, 회전 학습 ✓)로 ±60° 진행. 단일 motor F mode는 추후 별도 카드
