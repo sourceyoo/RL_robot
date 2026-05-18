@@ -46,7 +46,7 @@ KUFIsh_III (사용자 자체 CAD) 기반 단일 모터(active tail joint + passi
 - **중력 disable 유지**: `<flag gravity="disable"/>`. 켜면 가라앉음.
 - **euler="3.14159 0 0" + axis 부호 보정**: planar joint 축 `(1,0,0)`·`(0,-1,0)`·`(0,0,-1)` 보존. base_link 시작 자세에 맞춤.
 - **Inertial 값 임의 수정 X**: base는 MATLAB CG.m 실물 측정, tail·fin은 MODE_3 URDF 합의값.
-- **정착 조합 = MODE_3 + 단일 motor + Ecoflex passive fin + 3DOF planar**. MODE_2는 fin 미분리 구버전이라 사용 X.
+- **정착 조합 = MODE_3 + 단일 motor + fiberglass 0.88mm passive fin + 3DOF planar**. MODE_2는 fin 미분리 구버전이라 사용 X.
 - **fluidshape**: MuJoCo `none`·`ellipsoid` 둘뿐. 현재 `ellipsoid` 사용 (vortex shedding 못 모델 → sim2real 격차 있음).
 
 ### 2. 학습 절차
@@ -84,6 +84,7 @@ RL이 학습하는 단 하나의 모델. **이 파일이 모든 시뮬·학습�
 - **3DOF planar**: base_link = `slide_x` + `slide_y` + `hinge_yaw`. roll/pitch/z 잠김. (수정 금지 → [§1](#1-물리모델-수정-금지))
 - **qpos layout = 5**: `[root_x, root_y, root_yaw, tail_joint, fin_joint]`. env 인덱스가 이 순서 의존.
 - **수중**: `<option density="1000" viscosity="0.001">` + `<flag gravity="disable"/>`. added mass·drag는 `fluidshape="ellipsoid"`로 자동.
+- **fluidcoef 정착값**: `"0.4 3.0 2.81 1.0 0.27"` (fishsim BO sysid + KU_FISH 형상 보수화).
 - **euler="3.14159 0 0"**: base_link x축 180° 회전. 보상용 planar joint 축 `(1,0,0)`·`(0,-1,0)`·`(0,0,-1)`. qpos = world 좌표 (x, y, yaw).
 - **추진 방향 규약: world −x = 머리(전진).** 보상 함수 작성 시 *목표를 −x에*. freq_sweep에서 x_disp < 0이면 전진.
 
@@ -94,21 +95,21 @@ world ─[slide_x][slide_y][hinge_yaw]─ base_link (PLA 강체)
                                        ├ tail_joint (active hinge, ±20°)
                                        │   └ tail_link (PLA 강체)
                                        │       └ fin_joint (passive hinge, ±30°)
-                                       │           └ fin_1 (Ecoflex 00-30, density 1070)
+                                       │           └ fin_1 (fiberglass 0.88mm, 사용자 추정값)
 ```
 
 - **액션 = 1D** (단일 motor): `position` actuator on `tail_joint`, ctrlrange `-1..1`, gear=0.349(±20°), kp=100, kv=5, forcerange=±3 Nm (BL4260).
-- **fin_joint = passive**: stiffness=1e-2, damping=5e-5. RL이 명령하지 않음.
+- **fin_joint = passive**: stiffness=0.5, damping=1.05e-4. RL이 명령하지 않음.
 
 ### Inertial 값의 출처
 
 | body | mass | CoM | 출처 |
 |---|---|---|---|
 | base_link | 2.4349 kg | (0, 0, 0.004535) | **MATLAB CG.m 검증값**. CAD URDF off-diag inertia는 임의 재질 인공물이라 0으로 정리. |
-| tail_link | 0.0699 kg | (0.0511, 0, -0.005349) | MODE_3 URDF, y CoM=0으로 대칭화 |
-| fin_1 | 0.01052 kg | (0.0773, -0.0004, 0.006) | MODE_3 URDF, density=1070 (Ecoflex) |
+| tail_link | 0.025 kg | (0.0511, 0, -0.005349) | 사용자 추정값 (2026-05-18), MODE_3 URDF 비례 scale |
+| fin_1 | 0.024 kg | (0.0773, 0, 0.006) | 사용자 추정값 (2026-05-18), 두께 0.88mm fiberglass |
 
-base는 사용자 실물 측정값, 나머지는 사용자 합의 후 대칭화한 것. (수정 금지는 [핵심 규칙 §1](#1-물리모델-수정-금지))
+base는 사용자 실물 측정값, tail·fin은 사용자 추정값. (수정 금지는 [핵심 규칙 §1](#1-물리모델-수정-금지))
 
 ### Tail motor spec (BL4260 V2 + 24V + 6.8:1 평기어)
 
@@ -135,7 +136,7 @@ ctrl=±1 sine 12초: 1~6 Hz 모든 주파수 −x 전진(1Hz −0.49m, 3Hz −2.
 
 ## CAD 소스
 
-`fish_urdf/RL_SIM_MODE_3_description/` mesh 사용. URDF는 형상만, inertial은 위 표대로. URDF의 fin fixed joint는 MJCF에서 passive hinge로 교체(실리콘 변형). `MODE_2`는 fin 미분리 구버전, 사용 X.
+`fish_urdf/RL_SIM_MODE_3_description/` mesh 사용. URDF는 형상만, inertial은 위 표대로. URDF의 fin fixed joint는 MJCF에서 passive hinge로 교체(fiberglass 변형). `MODE_2`는 fin 미분리 구버전, 사용 X.
 
 ---
 

@@ -338,3 +338,98 @@ m4_v8 reward 그대로 (`sim/fish_env.py` 수정 X) s1부터 fresh 학습. tag `
 - C. **frame_skip ↑** (42 → 60) — D wagging 추진력 약화 → F 압력 ↑
 - D. **action wrap (F 강제)** — env가 sin(α·t + φ_offset) 자체 명령으로 wrap → "emergent 유지" 원칙 위배 단 최후 수단
 - E. **종료 + s3c 진행** — m4_v1 s3b 모델 (v33 천장 돌파, 회전 학습 ✓)로 ±60° 진행. 단일 motor F mode는 추후 별도 카드
+
+---
+
+## m4_v9 — fin 재질·질량·강성 변경 sysid 실험 (2026-05-17~18, 학습 전 단계)
+
+### 동기
+
+m4_v8b 결론 = 게걸음(side-slip + 약 B + 비대칭 sweep 혼합). reward shaping만으론 한계. **literature 매핑**:
+- `~/research/fish_rl/literature_turning_fish_rl.md` — Physics-informed RL (Chaplygin sleigh + Joukowski foil) 우리 3DOF planar과 model 일치. lateral 자유 = 게걸음 root cause 가설.
+- `~/research/fish_rl/literature_fluid_force_model_fish_rl.md` — fishsim BO sysid fluidcoef 정합.
+- `~/research/fish_rl/literature_fin_material_fish_rl.md` — passive fin 재질 → 추진 방향 mechanism.
+
+→ env-level 변경 우선 (v9-D fluid drag / 재질·질량). reward 변경 전 단계.
+
+### 변경 내역 (`sim/rl_fish.xml`, 사용자 명시)
+
+| 항목 | 이전 | 현재 | 출처 |
+|---|---|---|---|
+| `tail_link` mass | 0.06985 kg | **0.05000 kg** | 사용자 추정 (50g) |
+| `tail_link` diaginertia | `7e-6 5.6e-5 5.4e-5` | `5.0e-6 4.0e-5 3.87e-5` | mass 비례 scale (factor 0.7158, 형상 동일 가정) |
+| `fin_1` mass | 0.01052 kg | **0.05000 kg** | 사용자 추정 (50g) |
+| `fin_1` diaginertia | (mass scale) | `2.1076e-4 1.1399e-4 9.6780e-5` | mesh bbox (t=0.8mm·w=152.4mm·l=165.4mm) 얇은 직사각판 공식 |
+| `fin_joint` stiffness | 1e-2 | **0.64** | fiberglass 0.8mm cantilever 등가 |
+| `fin_joint` damping | 5e-5 | 5e-4 | fiberglass 등가 (×10) |
+| `fin_1` geom material | silicone | **fiberglass** (rgba `.9 .9 .8 0.85`) | 사용자 명시 |
+| `fin_1` geom density | 1070 | 1000 | 사용자 명시 (mass 명시되어 sim 영향 0 확인) |
+
+⚠ **base_link 변경 X** (CG·mass·inertia 모두 MATLAB CG.m 측정값 보존). CG (inertial pos) 모든 body 변경 X.
+
+### 추진 방향 뒤집힘 발견
+
+`freq_sweep.py` (ctrl=±1 sine 12s, 1~6Hz):
+
+| freq | x_disp [m] | direction |
+|---|---|---|
+| 0.5 | +0.516 | 후진 |
+| 1 | +0.757 | 후진 |
+| 2 | +0.956 | 후진 |
+| 3 | +0.856 | 후진 |
+| 4 | +0.531 | 후진 |
+| 5 | +0.393 | 후진 |
+| **6** | **−0.444** | **전진** ⭐ |
+
+- 이전 (Ecoflex, stiffness 1e-2): 1~6Hz 모든 freq −x 전진
+- 현재 (fiberglass, stiffness 0.64): **6Hz만 전진, 1~5Hz 전부 후진**
+
+### WET vs DRY f_n 측정 (impulse response)
+
+| | f_n |
+|---|---|
+| **DRY** (fluid off) | **6.00 Hz** (이론 spring-mass) |
+| **WET** (fluid on) | **1.33 Hz** (fluid added mass + drag) |
+
+- 이론 spring-mass `ω_n = √(k/I)`로 DRY 8Hz 예측 → 실측 6Hz, fluid 영향 미고려 시 오차.
+- WET damping ratio ζ ≈ 0.54 (moderately damped) — free oscillation 사라짐, motor freq에 강제 동기화.
+- fin은 항상 motor freq로 진동, lag 거의 X, fin/tail amplitude ratio ≈ 1.0 (in-phase).
+
+### 6Hz 전진 mechanism (가설)
+
+motor freq 6Hz ≈ DRY f_n 6Hz → 공명 근처 phase 변화로 reverse Karman 일부 회복.
+
+### 핵심 통찰 (literature confirmed)
+
+**Very stiff regime → 강체 paddle → reverse Karman shedding 부재 → 후진**.
+- carangiform lag mechanism: fin이 tail보다 phase ↓ → vortex 생성 → 전진
+- 현재 WET에서 fin/tail in-phase (lag X) → mechanism 깸 → 후진
+
+### 측정 도구
+
+- `freq_sweep.py` — 추진 방향 검증 (1~6Hz sine ctrl)
+- 별도 FFT impulse response — WET·DRY f_n 측정
+
+### 현재 상태 (2026-05-18)
+
+- stiffness **0.64로 정착** (사용자 직접 선택). 6Hz 전진 mechanism 확인.
+- 학습 미시작. 1~5Hz 후진은 RL 학습에 큰 장애 (정책이 6Hz만 활용 학습 어려움 가능성).
+- 다음 결정 대기 (사용자):
+  1. **6Hz 활용 학습 시작** (m4_v8 reward + 현재 환경)
+  2. **stiffness 추가 ↓** (0.5, 0.3, 0.1 sweep) — 더 넓은 freq 전진 회복 시도
+  3. **fin mass / attack angle 변경** — 다른 mechanism 시도
+  4. **Ecoflex 복원** — 학습 위주로 진행 (재질 실험 보류)
+
+### stiffness 후보 비교 (계산값, 미실측)
+
+| stiffness | DRY f_n (∝√k) | 등가 두께 (∝k^(1/3)) | 예상 전진 freq |
+|---|---|---|---|
+| 0.64 (현재) | 6.0 Hz | 0.8mm | 6Hz만 ⭐ |
+| 0.5 | 5.3 Hz | 0.74mm | 5~6Hz 가능 |
+| 0.3 | 4.1 Hz | 0.62mm | 4~5Hz 가능 |
+| 0.1 | 2.4 Hz | 0.43mm | 2~3Hz 가능 |
+
+### 절대 강성 감각 (k=0.64 기준)
+
+- fin 끝 (L=0.165m)에서 ±30° 휘기 위한 힘 ≈ 207 g 무게 (`F = k·θ/L`).
+- 실물 등가 = fiberglass G10 0.8mm 시트 (손으로 살짝 휠 수 있는 정도).

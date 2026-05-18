@@ -22,10 +22,12 @@ qvel layout (5): [vx, vy, vyaw, vtail, vfin]
       − DC_PEN_W·|window_mean|   (m4_v8: mean² → |mean| linear, 약 B 영역 강화)
       + ASYM_BONUS_W·max(0, target_sign·sf_signed − 0.05)
       + AMP_ASYM_W·max(0, target_sign·amp_signed − 0.1)
-      − TIME_PEN_W·distance·current_time.
+      − TIME_PEN_W·distance·current_time
+      − BACK_PEN_W·max(0, −head_vel)   (head_dir 반대 방향 velocity 페널티).
   - align_weight: 10s ep 0.02, 30s ep 0.012.
   - ACTION_DIFF_W = 0.01, DC_PEN_W = 0.05 (m4_v3 효과 유지).
   - ASYM_BONUS_W = 0.02, AMP_ASYM_W = 0.01 (m4_v7 signed 변형 — target sign 정합만 보상).
+  - BACK_PEN_W = 0.5 (head 반대 방향 velocity, 1Hz under-resonance 회피 유도).
   - m4_v7: m4_v6 hack 교정 (F 학습 ✓ but 방향 잘못 → 미도달). signed 식으로 방향 정렬 강제. 직진(=π)에선 target_sign=0이라 bonus 0.
   - TIME_PEN_W = 1e-5 (Pangasius ϕ·d·t). 천천히 떠도는 mode 억제.
   - 가산식 (곱셈은 mode collapse — 함정 #7).
@@ -202,7 +204,11 @@ class FishSwimEnv(gym.Env):
         ASYM_BONUS_W = 0.02   # m4_v7: signed sf asym (target sign 정합 시만)
         AMP_ASYM_W = 0.01     # m4_v7: signed amp asym (target sign 정합 시만)
         TIME_PEN_W = 1e-5
+        BACK_PEN_W = 0.5      # head_dir 반대 방향 velocity 페널티 (1Hz under-resonance 영역 회피)
         yaw_rate = float(self.data.qvel[IDX_YAW])
+        v_world = np.array([float(self.data.qvel[IDX_X]), float(self.data.qvel[IDX_Y])])
+        head_vel = float(np.dot(v_world, head_dir))
+        backward_pen = max(0.0, -head_vel) * BACK_PEN_W
         ctrl_now = float(clipped[0])
         action_diff = (ctrl_now - self._prev_ctrl) ** 2
         # m4_v7: window + DC penalty + signed asym/amp bonus (target sign 정합만 +)
@@ -236,6 +242,7 @@ class FishSwimEnv(gym.Env):
             + ASYM_BONUS_W * asym_signed_bonus
             + AMP_ASYM_W * amp_signed_bonus
             - TIME_PEN_W * distance * current_time
+            - backward_pen
         )
 
         self._prev_distance = distance
