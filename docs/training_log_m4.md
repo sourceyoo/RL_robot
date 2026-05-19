@@ -433,3 +433,63 @@ motor freq 6Hz ≈ DRY f_n 6Hz → 공명 근처 phase 변화로 reverse Karman 
 
 - fin 끝 (L=0.165m)에서 ±30° 휘기 위한 힘 ≈ 207 g 무게 (`F = k·θ/L`).
 - 실물 등가 = fiberglass G10 0.8mm 시트 (손으로 살짝 휠 수 있는 정도).
+
+---
+
+## 박스 fin 시도 (실패, 2026-05-19)
+
+V-cut mesh → 면적 등가 박스로 fin geom 교체 시도. **모든 후보 freq 전 영역 후진** — V-cut + R5로 revert.
+
+### 시도 동기 (이후 부정확으로 판명)
+
+- main 가설: V-cut mesh의 fork-to-fork (mesh local z, 0.166m) > chord (0.160m)라 MuJoCo 자동 PCA가 fork-to-fork를 ellipsoid major로 잡아 motion 방향(world x)과 어긋남.
+- → 박스로 교체하면 chord를 PCA major = world x = motion 방향에 명시적 정렬 가능.
+- 추가 동기: V-cut fill ratio 41.7% (실 면적 105 cm² / bbox 252 cm²) → fluid가 bbox 면적으로 인식할 가능성 우려.
+
+### 시도 내역
+
+| 후보 | chord × span | thickness | fluid ellipsoid 半축 | freq_sweep 결과 |
+|---|---|---|---|---|
+| **V-cut (reference)** | mesh (15.2 × 16.5 cm) | 0.88mm | (≈0, 0.082, 0.089) — motion 방향 thin disk | 4~6Hz 전진 ✓ |
+| 후보 2 (cigar) | 15.2 × 6.9 cm | 0.88mm | (0.098, 0.0014, 0.045) — motion 방향 longest | **모든 freq 후진** |
+| 후보 1 (disk-ish) | 10.5 × 10.0 cm | 0.88mm | (0.053, ≈0, 0.050) — disk normal = lateral | **모든 freq 후진** (후보 2보다 더 큰 후진) |
+
+면적은 모두 105 cm² 유지. R5 fluidcoef (`0.4 3.0 2.81 1.0 0.27`) 그대로.
+
+### Critic subagent 검증 결과 (main 진단 정정)
+
+- main 가설 ("V-cut PCA major가 fork-to-fork에 잡혀 motion과 어긋남")은 **검산상 부정확**.
+- V-cut의 mesh_quat z-90°로 이미 chord(0.152)가 body local x에 정렬돼 있었음. fork-to-fork extent의 영향은 PCA 방향이 아니라 **inertia diag에 들어가 fluid ellipsoid 半축을 motion 방향으로 0으로 만드는 것**.
+- 진짜 차이는: **V-cut은 motion edge-on (motion 방향 半축 ≈ 0, 칼날), 박스는 motion face-on (motion 방향 半축 가장 김, cigar/disk normal lateral)**.
+
+### 핵심 인사이트 — PCA major axis ↔ motion 방향의 trade-off
+
+**두 조건은 동시 만족 불가능**:
+
+| 원하는 것 | 결과 |
+|---|---|
+| PCA major = motion 방향 | mass가 motion 방향으로 길게 분포 → cigar → motion에 face-on → 큰 forward drag |
+| motion 방향 thin (저항 ↓) | mass가 motion 방향으로 짧게 분포 → PCA major는 motion에 perpendicular |
+
+V-cut의 자연 PCA 정렬 (fork-to-fork가 major, motion에 perpendicular)이 사실 **fluid 추진 측면에서 옳음** — motion 방향이 disk normal이라 forward drag ≈ 0. 추진 효율의 본질.
+
+### R5 fluidcoef의 V-cut 의존성
+
+R5 = fishsim BO sysid + KU_FISH 보수화 → **V-cut의 특수 ellipsoid (motion 방향 thin disk)** 에 fit된 값. 박스로 가는 한 어떤 dimensions로도 같은 fluid 거동 재현 불가능:
+- 박스의 thickness는 항상 lateral 방향(body local y)에만 정의됨
+- chord/span을 어떻게 바꿔도 motion 방향(body local x)으로는 항상 large face
+- → 박스 채택 = R5 무효화 = fishsim BO 재실행 필요
+
+### Box vs Mesh의 inertia 자동 계산 차이
+
+- **box**: 균일 분포 가정. mass가 chord × span × thickness 전체 volume에 등분 → motion 방향(chord)으로도 mass 분포 → ellipsoid 半축이 chord 비례.
+- **mesh**: vertex 분포 기반. mesh 점들이 motion 방향(x)으로 0.88mm 안에만 모임 (얇은 plate) → motion 방향 inertia 항 ≈ 0 → ellipsoid 半축 ≈ 0.
+
+→ "fluidshape='ellipsoid'"는 외형(visual geom)이 아닌 **inertia tensor**로 등가 ellipsoid를 만듦. 박스의 inertia 자동 계산이 박스 외형(평평한 disk처럼 보임)과 다른 ellipsoid(cigar)를 생성.
+
+### 결론
+
+- **V-cut으로 revert** (git checkout HEAD -- sim/rl_fish.xml sim/freq_sweep.py CLAUDE.md). 4~6Hz 전진 회복 확인.
+- V-cut의 PCA 자연 정렬은 "잘못된 정렬"이 아니라 BCF 영법의 효율 본질.
+- 향후 박스 시도하려면 fishsim BO 재실행으로 박스 형상에 맞는 fluidcoef 재sysid 필요 (자원 큼).
+- 또는 ellipsoid model 자체를 개선 (Lighthill `mjcb_passive` 또는 ANN surrogate) — 별도 프로젝트 규모.
