@@ -147,7 +147,7 @@ ctrl=±1 sine 12초: 1~6 Hz 모든 주파수 −x 전진(1Hz −0.49m, 3Hz −2.
 - `curriculum.py` — 6단계 stage 정의 + `--start-stage`·`--end-stage`로 단일 stage 실행 + `--seed` `--tb-tag` `--runs-subdir` (multi-seed 지원). 사용 규칙은 [핵심 규칙 §2](#2-학습-절차) 참조.
 - `eval_stages.py` — 모델 1개를 모든 stage 분포에서 **deterministic eval** (6 stage × 100 ep, CPU, ~20분). TB callback의 random eval 진동 noise(±10%p)를 회피하고 진짜 졸업 여부 확인. **catastrophic forgetting 측정 필수**.
 - `view_policy.py` — 저장된 정책 viewer rollout.
-- 진단: `freq_sweep.py` (추진 방향), `yaw_test.py` (회전 능력 — v4 핵심).
+- 진단: `diagnostics/freq_sweep.py` (추진 방향), `diagnostics/yaw_test.py` (회전 능력 — v4 핵심). 기타 진단(f_sweep, freq_sweep_locked/norollpitch, multiseg_test, waveform_test)도 `diagnostics/` 하위.
 
 ### Curriculum 학습
 

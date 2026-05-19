@@ -1,0 +1,275 @@
+/home/yoo/.local/lib/python3.10/site-packages/matplotlib/projections/__init__.py:63: UserWarning: Unable to import Axes3D. This may be due to multiple versions of Matplotlib being installed (e.g. as a system package and as a pip package). As a result, the 3D projection is not available.
+  warnings.warn("Unable to import Axes3D. This may be due to multiple versions of "
+[curriculum] Stage 6부터. init = /home/yoo/RL_robot/sim/runs/s3c_arc60/model.zip
+
+============================================================
+Stage 3d — 좌우 ±90° (θ ∈ [π/2, 3π/2], 전체 head arc)
+  threshold=90%, min_steps=30,000, max_steps=1,000,000
+============================================================
+[curriculum] /home/yoo/RL_robot/sim/runs/s3c_arc60/model.zip 정책 로드 (fine-tuning)
+[curriculum] ent_floor = 0.01
+Logging to /home/yoo/RL_robot/sim/tb_logs/model3_v26/s3d_arc90_1
+---------------------------------
+| fish/              |          |
+|    avg_align       | -0.158   |
+|    episode_seconds | 30       |
+|    final_distance  | 2.18     |
+|    success_rate    | 0        |
+| rollout/           |          |
+|    ep_len_mean     | 1.5e+03  |
+|    ep_rew_mean     | -23.3    |
+| time/              |          |
+|    episodes        | 4        |
+|    fps             | 360      |
+|    time_elapsed    | 16       |
+|    total_timesteps | 6000     |
+| train/             |          |
+|    actor_loss      | 2.09     |
+|    critic_loss     | 0.00488  |
+|    ent_coef        | 0.0142   |
+|    ent_coef_loss   | -0.263   |
+|    learning_rate   | 0.0003   |
+|    n_updates       | 819996   |
+---------------------------------
+---------------------------------
+| fish/              |          |
+|    avg_align       | 0.0499   |
+|    episode_seconds | 30       |
+|    final_distance  | 1.63     |
+|    success_rate    | 0        |
+| rollout/           |          |
+|    ep_len_mean     | 1.5e+03  |
+|    ep_rew_mean     | -15.9    |
+| time/              |          |
+|    episodes        | 8        |
+|    fps             | 325      |
+|    time_elapsed    | 36       |
+|    total_timesteps | 12000    |
+| train/             |          |
+|    actor_loss      | 1.95     |
+|    critic_loss     | 0.00467  |
+|    ent_coef        | 0.01     |
+|    ent_coef_loss   | -1.02    |
+|    learning_rate   | 0.0003   |
+|    n_updates       | 825996   |
+---------------------------------
+---------------------------------
+| fish/              |          |
+|    avg_align       | -0.0591  |
+|    episode_seconds | 27.7     |
+|    final_distance  | 1.34     |
+|    success_rate    | 0.0833   |
+| rollout/           |          |
+|    ep_len_mean     | 1.38e+03 |
+|    ep_rew_mean     | -12.7    |
+| time/              |          |
+|    episodes        | 12       |
+|    fps             | 319      |
+|    time_elapsed    | 51       |
+|    total_timesteps | 16590    |
+| train/             |          |
+|    actor_loss      | 1.79     |
+|    critic_loss     | 0.00542  |
+|    ent_coef        | 0.01     |
+|    ent_coef_loss   | -0.242   |
+|    learning_rate   | 0.0003   |
+|    n_updates       | 830586   |
+---------------------------------
+---------------------------------
+| fish/              |          |
+|    avg_align       | -0.117   |
+|    episode_seconds | 26.6     |
+|    final_distance  | 1.13     |
+|    success_rate    | 0.125    |
+| rollout/           |          |
+|    ep_len_mean     | 1.33e+03 |
+|    ep_rew_mean     | -10.4    |
+| time/              |          |
+|    episodes        | 16       |
+|    fps             | 316      |
+|    time_elapsed    | 67       |
+|    total_timesteps | 21268    |
+| train/             |          |
+|    actor_loss      | 2.3      |
+|    critic_loss     | 0.00393  |
+|    ent_coef        | 0.01     |
+|    ent_coef_loss   | -0.973   |
+|    learning_rate   | 0.0003   |
+|    n_updates       | 835264   |
+---------------------------------
+---------------------------------
+| fish/              |          |
+|    avg_align       | -0.046   |
+|    episode_seconds | 21.9     |
+|    final_distance  | 0.919    |
+|    success_rate    | 0.3      |
+| rollout/           |          |
+|    ep_len_mean     | 1.1e+03  |
+|    ep_rew_mean     | -5.17    |
+| time/              |          |
+|    episodes        | 20       |
+|    fps             | 316      |
+|    time_elapsed    | 69       |
+|    total_timesteps | 21936    |
+| train/             |          |
+|    actor_loss      | 1.89     |
+|    critic_loss     | 0.00678  |
+|    ent_coef        | 0.01     |
+|    ent_coef_loss   | -1.42    |
+|    learning_rate   | 0.0003   |
+|    n_updates       | 835932   |
+---------------------------------
+---------------------------------
+| fish/              |          |
+|    avg_align       | 0.00609  |
+|    episode_seconds | 22.2     |
+|    final_distance  | 0.873    |
+|    success_rate    | 0.292    |
+| rollout/           |          |
+|    ep_len_mean     | 1.11e+03 |
+|    ep_rew_mean     | -3.81    |
+| time/              |          |
+|    episodes        | 24       |
+|    fps             | 314      |
+|    time_elapsed    | 84       |
+|    total_timesteps | 26595    |
+| train/             |          |
+|    actor_loss      | 1.83     |
+|    critic_loss     | 0.00438  |
+|    ent_coef        | 0.01     |
+|    ent_coef_loss   | -1.67    |
+|    learning_rate   | 0.0003   |
+|    n_updates       | 840591   |
+---------------------------------
+---------------------------------
+| fish/              |          |
+|    avg_align       | -0.0747  |
+|    episode_seconds | 23.3     |
+|    final_distance  | 0.857    |
+|    success_rate    | 0.25     |
+| rollout/           |          |
+|    ep_len_mean     | 1.16e+03 |
+|    ep_rew_mean     | -4.96    |
+| time/              |          |
+|    episodes        | 28       |
+|    fps             | 313      |
+|    time_elapsed    | 104      |
+|    total_timesteps | 32595    |
+| train/             |          |
+|    actor_loss      | 1.94     |
+|    critic_loss     | 0.0101   |
+|    ent_coef        | 0.01     |
+|    ent_coef_loss   | -0.905   |
+|    learning_rate   | 0.0003   |
+|    n_updates       | 846591   |
+---------------------------------
+---------------------------------
+| fish/              |          |
+|    avg_align       | -0.0727  |
+|    episode_seconds | 23.7     |
+|    final_distance  | 0.819    |
+|    success_rate    | 0.25     |
+| rollout/           |          |
+|    ep_len_mean     | 1.18e+03 |
+|    ep_rew_mean     | -4.44    |
+| time/              |          |
+|    episodes        | 32       |
+|    fps             | 312      |
+|    time_elapsed    | 121      |
+|    total_timesteps | 37843    |
+| train/             |          |
+|    actor_loss      | 1.81     |
+|    critic_loss     | 0.00331  |
+|    ent_coef        | 0.01     |
+|    ent_coef_loss   | -1.55    |
+|    learning_rate   | 0.0003   |
+|    n_updates       | 851839   |
+---------------------------------
+---------------------------------
+| fish/              |          |
+|    avg_align       | -0.0689  |
+|    episode_seconds | 23.6     |
+|    final_distance  | 0.779    |
+|    success_rate    | 0.25     |
+| rollout/           |          |
+|    ep_len_mean     | 1.18e+03 |
+|    ep_rew_mean     | -3.97    |
+| time/              |          |
+|    episodes        | 36       |
+|    fps             | 311      |
+|    time_elapsed    | 136      |
+|    total_timesteps | 42422    |
+| train/             |          |
+|    actor_loss      | 1.92     |
+|    critic_loss     | 0.00354  |
+|    ent_coef        | 0.01     |
+|    ent_coef_loss   | -1.81    |
+|    learning_rate   | 0.0003   |
+|    n_updates       | 856418   |
+---------------------------------
+---------------------------------
+| fish/              |          |
+|    avg_align       | -0.0597  |
+|    episode_seconds | 23.5     |
+|    final_distance  | 0.764    |
+|    success_rate    | 0.25     |
+| rollout/           |          |
+|    ep_len_mean     | 1.17e+03 |
+|    ep_rew_mean     | -3.95    |
+| time/              |          |
+|    episodes        | 40       |
+|    fps             | 309      |
+|    time_elapsed    | 151      |
+|    total_timesteps | 46996    |
+| train/             |          |
+|    actor_loss      | 2.04     |
+|    critic_loss     | 0.00237  |
+|    ent_coef        | 0.01     |
+|    ent_coef_loss   | -2.31    |
+|    learning_rate   | 0.0003   |
+|    n_updates       | 860992   |
+---------------------------------
+---------------------------------
+| fish/              |          |
+|    avg_align       | -0.0302  |
+|    episode_seconds | 24.1     |
+|    final_distance  | 0.76     |
+|    success_rate    | 0.227    |
+| rollout/           |          |
+|    ep_len_mean     | 1.2e+03  |
+|    ep_rew_mean     | -3.76    |
+| time/              |          |
+|    episodes        | 44       |
+|    fps             | 308      |
+|    time_elapsed    | 172      |
+|    total_timesteps | 52996    |
+| train/             |          |
+|    actor_loss      | 1.93     |
+|    critic_loss     | 0.00237  |
+|    ent_coef        | 0.01     |
+|    ent_coef_loss   | -2.32    |
+|    learning_rate   | 0.0003   |
+|    n_updates       | 866992   |
+---------------------------------
+---------------------------------
+| fish/              |          |
+|    avg_align       | 0.00336  |
+|    episode_seconds | 24       |
+|    final_distance  | 0.747    |
+|    success_rate    | 0.229    |
+| rollout/           |          |
+|    ep_len_mean     | 1.2e+03  |
+|    ep_rew_mean     | -3.24    |
+| time/              |          |
+|    episodes        | 48       |
+|    fps             | 307      |
+|    time_elapsed    | 187      |
+|    total_timesteps | 57575    |
+| train/             |          |
+|    actor_loss      | 1.78     |
+|    critic_loss     | 0.00453  |
+|    ent_coef        | 0.01     |
+|    ent_coef_loss   | -2.05    |
+|    learning_rate   | 0.0003   |
+|    n_updates       | 871571   |
+---------------------------------

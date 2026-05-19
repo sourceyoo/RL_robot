@@ -11,7 +11,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-XML = Path(__file__).parent / "rl_fish.xml"
+XML = Path(__file__).parent.parent / "rl_fish.xml"
 F = 3.0  # 기본 주파수
 DURATION = 10.0
 SETTLE = 2.0

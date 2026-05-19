@@ -17,7 +17,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-XML = Path(__file__).parent / "rl_fish.xml"
+XML = Path(__file__).parent.parent / "rl_fish.xml"
 
 
 def sweep(freqs, duration=15.0, settle=3.0):

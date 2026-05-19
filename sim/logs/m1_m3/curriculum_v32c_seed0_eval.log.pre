@@ -1,0 +1,13 @@
+/home/yoo/.local/lib/python3.10/site-packages/matplotlib/projections/__init__.py:63: UserWarning: Unable to import Axes3D. This may be due to multiple versions of Matplotlib being installed (e.g. as a system package and as a pip package). As a result, the 3D projection is not available.
+  warnings.warn("Unable to import Axes3D. This may be due to multiple versions of "
+
+[eval] model=sim/runs/v32c_seed0/s3b_arc30/model.zip, n_ep=100, seed_base=42
+
+stage          reach   align   fdist   ep_s
+--------------------------------------------
+s1_forward    100.0%  +1.000   0.075   1.18
+s2_anchor     100.0%  +0.999   0.035   1.28
+s3a_arc15     100.0%  +0.927   0.077   1.35
+s3b_arc30      75.0%  +0.630   0.121   8.80
+s3c_arc60      39.0%  +0.441   0.244  18.99
+s3d_arc90      23.0%  +0.227   0.333  23.51

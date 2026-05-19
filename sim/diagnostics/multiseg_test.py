@@ -11,7 +11,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-XML = Path(__file__).parent / "rl_fish.xml"
+XML = Path(__file__).parent.parent / "rl_fish.xml"
 DURATION = 10.0
 SETTLE = 2.0
 
