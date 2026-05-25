@@ -107,6 +107,24 @@ STAGES = [
         "episode_seconds": 60.0,
         "ent_floor": 0.010,
     },
+    # m4_v20: forgetting 회복 stage. 5 sub 균등 mixed sampling + sub trigger
+    # (모든 sub의 reach_rate ≥ threshold일 때만 trigger). 마지막 stage에 chain.
+    {
+        "tag": "s_all_mix",
+        "desc": "Stage 6 — 5 sub mixed (s1+s3a+s3b+s3c+s3d 균등, sub trigger)",
+        "theta_min": -PI, "theta_max": PI,  # legacy fallback (sub_distributions 우선)
+        "success_radius": 0.08,
+        "max_steps": 2_000_000,
+        "episode_seconds": 60.0,
+        "ent_floor": 0.005,
+        "sub_distributions": [
+            {"sub_id": "s1",  "kind": "theta",  "range": (PI, PI),                  "weight": 1.0},
+            {"sub_id": "s3a", "kind": "offset", "range": (PI * 9.2 / 180.0, PI / 12), "weight": 1.0},
+            {"sub_id": "s3b", "kind": "offset", "range": (PI / 12, PI / 6),         "weight": 1.0},
+            {"sub_id": "s3c", "kind": "offset", "range": (PI / 6,  PI / 3),         "weight": 1.0},
+            {"sub_id": "s3d", "kind": "offset", "range": (PI / 3,  PI / 2),         "weight": 1.0},
+        ],
+    },
 ]
 
 
@@ -209,17 +227,30 @@ def main():
             offset_range = None
             if "theta_offset_min" in stage and "theta_offset_max" in stage:
                 offset_range = (stage["theta_offset_min"], stage["theta_offset_max"])
+            sub_distributions = stage.get("sub_distributions")
+            sub_ids = [s["sub_id"] for s in sub_distributions] if sub_distributions else None
             ep_sec = stage.get("episode_seconds", 10.0)
             make_env = make_env_factory(theta_range, stage["success_radius"],
                                         episode_seconds=ep_sec,
                                         action_history_n=ACTION_HISTORY_N,
-                                        target_theta_offset_range=offset_range)
+                                        target_theta_offset_range=offset_range,
+                                        sub_distributions=sub_distributions)
             env = make_vec_env(make_env, n_envs=1)
 
             if prev_model_path is not None:
                 print(f"[curriculum] {prev_model_path} 정책 로드 (fine-tuning)")
                 model = SAC.load(str(prev_model_path), env=env, device=args.device)
                 model.tensorboard_log = str(tb_dir)
+                # m4_v20: replay buffer rehearsal (literature: CLEAR 2019 + Continual World 2021).
+                # SAC.load는 buffer 안 가져옴 — chain 학습 시 이전 stage 경험 0% → forgetting.
+                # 이전 stage save_replay_buffer.pkl 있으면 load → forgetting 완화.
+                prev_buffer_path = prev_model_path.parent / "replay_buffer.pkl"
+                if prev_buffer_path.exists():
+                    model.load_replay_buffer(str(prev_buffer_path))
+                    print(f"[curriculum] replay buffer 로드: {prev_buffer_path} "
+                          f"(size={model.replay_buffer.size():,})")
+                else:
+                    print(f"[curriculum] (replay buffer 파일 없음 — 첫 chain stage)")
                 # SAC.load 후 seed property는 init seed 그대로 — multi-seed fine-tune엔 재설정 필요.
                 if args.seed is not None:
                     model.set_random_seed(args.seed)
@@ -229,7 +260,7 @@ def main():
                 model = SAC(
                     "MlpPolicy", env, verbose=1, device=args.device,
                     tensorboard_log=str(tb_dir),
-                    learning_rate=3e-4, buffer_size=200_000, batch_size=256,
+                    learning_rate=3e-4, buffer_size=3_000_000, batch_size=256,
                     tau=0.005, gamma=0.99, train_freq=1, gradient_steps=1,
                     learning_starts=1_000,
                     ent_coef="auto_0.1",  # entropy 초기값 0.1 (collapse 늦춤)
@@ -242,11 +273,13 @@ def main():
             # peak 시점 model_best.zip 별도 저장 (후반 후퇴 대비).
             # deterministic check: stochastic 90% trigger 시 det eval로 진짜 90% 확인 (함정 #13).
             def _det_env_builder(_theta_range=theta_range, _offset_range=offset_range,
+                                 _sub=sub_distributions,
                                  _sr=stage["success_radius"],
                                  _ep=ep_sec, _N=ACTION_HISTORY_N):
                 return FishSwimEnv(
                     target_theta_range=_theta_range,
                     target_theta_offset_range=_offset_range,
+                    sub_distributions=_sub,
                     success_radius=_sr,
                     episode_seconds=_ep,
                     action_history_n=_N,
@@ -258,6 +291,7 @@ def main():
                 det_env_fn=_det_env_builder,
                 det_episodes=args.det_episodes,
                 det_cooldown_steps=args.det_cooldown_steps,
+                sub_ids=sub_ids,
             ))
             # ent_floor_end 있으면 linear decay (0 → max_steps).
             ent_floor_end = stage.get("ent_floor_end")
@@ -284,6 +318,11 @@ def main():
 
             model.save(run_dir / "model")
             print(f"[curriculum] saved -> {run_dir / 'model.zip'}")
+            # m4_v20: replay buffer 보존 (다음 stage가 load해 forgetting 완화).
+            buffer_path = run_dir / "replay_buffer.pkl"
+            model.save_replay_buffer(str(buffer_path))
+            print(f"[curriculum] replay buffer saved -> {buffer_path} "
+                  f"(size={model.replay_buffer.size():,})")
 
             save_training_plots(tb_dir, stage["tag"], plot_dir)
 

@@ -88,6 +88,9 @@ def main():
     print("viewer 창에서 마우스로 카메라 조작. 창 닫으면 종료.")
 
     with mujoco.viewer.launch_passive(model, data) as viewer:
+        # env.step의 frame_skip 내부 mj_step 루프마다 viewer.sync() + realtime sleep을
+        # 수행하도록 env에 viewer를 붙임. 4Hz stroboscopic effect 해소.
+        env._viewer = viewer
         step = 0
         ep_reward = 0.0
         ep_count = 1
@@ -97,8 +100,6 @@ def main():
         fin_buf: list[float] = []
 
         while viewer.is_running():
-            sim_start = time.time()
-
             if sac is not None:
                 action, _ = sac.predict(obs, deterministic=True)
             elif args.sine:
@@ -111,8 +112,6 @@ def main():
             step += 1
             tail_buf.append(float(data.qpos[3]))  # IDX_TAIL=3
             fin_buf.append(float(data.qpos[4]))   # IDX_FIN=4
-
-            viewer.sync()
 
             if time.time() - last_print > 1.0:
                 tail_amp = float(np.degrees(max(tail_buf) - min(tail_buf))) if tail_buf else 0.0
@@ -139,10 +138,6 @@ def main():
                 ep_count += 1
                 tail_buf.clear()
                 fin_buf.clear()
-
-            elapsed = time.time() - sim_start
-            if elapsed < env.dt:
-                time.sleep(env.dt - elapsed)
 
 
 if __name__ == "__main__":

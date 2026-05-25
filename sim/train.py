@@ -74,6 +74,8 @@ class CurriculumStopCallback(BaseCallback):
                  dt: float = 0.02, best_save_path: "Path | None" = None,
                  det_env_fn=None, det_episodes: int = 50,
                  det_cooldown_steps: int = 100_000,
+                 sub_ids: "list[str] | None" = None, sub_window: int = 30,
+                 sub_min_samples: int = 20,
                  verbose: int = 1):
         super().__init__(verbose)
         self.threshold = threshold
@@ -86,6 +88,17 @@ class CurriculumStopCallback(BaseCallback):
         self.recent_lengths: collections.deque = collections.deque(maxlen=window)
         self.recent_aligns: collections.deque = collections.deque(maxlen=window)
         self.last_check = 0
+        # m4_v20 sub trigger: sub_ids 있으면 sub별 deque 유지, 모든 sub가 threshold 이상일 때만 trigger.
+        # sub_window: 각 sub별 deque 크기. sub_min_samples: trigger 평가 위한 최소 sample 수.
+        self.sub_ids = sub_ids
+        self.sub_window = sub_window
+        self.sub_min_samples = sub_min_samples
+        if sub_ids is not None:
+            self.sub_reaches: "dict[str, collections.deque] | None" = {
+                sid: collections.deque(maxlen=sub_window) for sid in sub_ids
+            }
+        else:
+            self.sub_reaches = None
         # reach_rate max 갱신 시 별도 저장. None이면 비활성. 학습 끝 model.zip과 공존.
         # (후반 catastrophic forgetting 대비 — peak 시점 정책 보존.)
         self.best_save_path = best_save_path
@@ -108,13 +121,19 @@ class CurriculumStopCallback(BaseCallback):
         for info, done in zip(infos, dones):
             if done:
                 ep_ended = True
-                self.recent_reached.append(1.0 if info.get("reached", False) else 0.0)
+                reached = 1.0 if info.get("reached", False) else 0.0
+                self.recent_reached.append(reached)
                 self.recent_distances.append(float(info.get("distance", 0.0)))
                 self.recent_aligns.append(float(info.get("align", 0.0)))
                 # SB3 Monitor가 ep 길이를 info["episode"]["l"]로 자동 채움
                 ep_block = info.get("episode")
                 if ep_block is not None:
                     self.recent_lengths.append(float(ep_block.get("l", 0.0)))
+                # m4_v20 sub trigger: sub_id별 reach 갱신.
+                if self.sub_reaches is not None:
+                    sub_id = info.get("sub_id")
+                    if sub_id in self.sub_reaches:
+                        self.sub_reaches[sub_id].append(reached)
 
         # ep 종료 시점에 TB 메트릭 갱신 (학습 부담 최소)
         if ep_ended and self.recent_reached:
@@ -138,20 +157,39 @@ class CurriculumStopCallback(BaseCallback):
         if self.n_calls - self.last_check >= self.check_every:
             self.last_check = self.n_calls
             if len(self.recent_reached) >= max(20, self.window // 2):
-                rate = sum(self.recent_reached) / len(self.recent_reached)
-                print(f"[curriculum] step {self.num_timesteps}: reach_rate = {rate:.1%} "
-                      f"(window={len(self.recent_reached)})")
+                avg_rate = sum(self.recent_reached) / len(self.recent_reached)
 
-                # best-model checkpoint: max 갱신 시 별도 저장
-                if self.best_save_path is not None and rate > self.best_rate:
-                    self.best_rate = rate
+                # m4_v20 sub trigger: sub_reaches 있으면 trigger·best 기준 = min(sub_rates).
+                # 모든 sub가 sub_min_samples 모이지 않았으면 아직 trigger 평가 불가 (단 avg는 표시).
+                sub_rates: "dict[str, float] | None" = None
+                rate_for_trigger = avg_rate
+                if self.sub_reaches is not None:
+                    insufficient = [sid for sid, deq in self.sub_reaches.items()
+                                    if len(deq) < self.sub_min_samples]
+                    if insufficient:
+                        print(f"[curriculum] step {self.num_timesteps}: avg_reach = {avg_rate:.1%} "
+                              f"(sub 데이터 부족: {','.join(insufficient)})")
+                        return True
+                    sub_rates = {sid: sum(deq) / len(deq) for sid, deq in self.sub_reaches.items()}
+                    rate_for_trigger = min(sub_rates.values())  # 최약 sub
+                    rates_str = " ".join(f"{sid}={r:.0%}" for sid, r in sorted(sub_rates.items()))
+                    print(f"[curriculum] step {self.num_timesteps}: avg={avg_rate:.1%} "
+                          f"min_sub={rate_for_trigger:.1%}  [{rates_str}]")
+                else:
+                    print(f"[curriculum] step {self.num_timesteps}: reach_rate = {avg_rate:.1%} "
+                          f"(window={len(self.recent_reached)})")
+
+                # best-model checkpoint: trigger 기준 (avg 또는 min_sub) max 갱신 시 저장
+                if self.best_save_path is not None and rate_for_trigger > self.best_rate:
+                    self.best_rate = rate_for_trigger
                     self.best_step = self.num_timesteps
                     self.model.save(str(self.best_save_path))
-                    print(f"[curriculum] ★ best 갱신 reach_rate={rate:.1%} "
+                    print(f"[curriculum] ★ best 갱신 rate={rate_for_trigger:.1%} "
                           f"step={self.num_timesteps} → {self.best_save_path}.zip")
 
                 # 조기 종료 (threshold > 0일 때만)
-                if self.threshold > 0 and rate >= self.threshold:
+                if self.threshold > 0 and rate_for_trigger >= self.threshold:
+                    rate = rate_for_trigger
                     # det_env_fn 있으면 deterministic eval로 진짜 확인 (함정 #13).
                     if self.det_env_fn is not None:
                         if self.num_timesteps < self._det_cooldown_until:
@@ -313,12 +351,14 @@ def save_training_plots(tb_log_root: Path, tag: str, plot_dir: Path) -> None:
 
 def make_env_factory(target_theta_range, success_radius,
                      episode_seconds=10.0, action_history_n=0,
-                     target_theta_offset_range=None):
+                     target_theta_offset_range=None,
+                     sub_distributions=None):
     """env 인자(curriculum용)를 closure로 묶어 SB3가 부를 수 있는 0-arg make_env 반환."""
     def make_env():
         return Monitor(FishSwimEnv(
             target_theta_range=target_theta_range,
             target_theta_offset_range=target_theta_offset_range,
+            sub_distributions=sub_distributions,
             success_radius=success_radius,
             episode_seconds=episode_seconds,
             action_history_n=action_history_n,

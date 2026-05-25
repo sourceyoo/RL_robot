@@ -12,6 +12,12 @@ qvel layout (5): [vx, vy, vyaw, vtail, vfin]
   11 |yaw_err|      12 distance       (v32-C: derived obs 명시)
   13~ 최근 N step의 sf_asym 이력 (action_history_n>0일 때)
 
+target 분포 (m4_v20): sub_distributions 인자로 mixed sampling 지원.
+  list[dict] — 각 dict {"sub_id", "kind"("theta"|"offset"), "range"(mn,mx), "weight"}.
+  reset마다 weight 비례 sub 선택 → 해당 분포에서 theta sample → info["sub_id"] 전달.
+  callback이 sub별 reach_rate 측정해 sub trigger(모든 sub ≥ threshold일 때만 졸업).
+  forgetting + 평균 inflated 동시 차단. None이면 기존 단일 분포 logic.
+
 행동 (1차원): sf_asym ∈ [-1, 1].
   m4_v17: 정책은 더 이상 motor ctrl 직접 X. 4Hz sine carrier 강제 (amp 고정 1.0).
   정책 출력 = 시간 비대칭 ratio.
@@ -54,6 +60,7 @@ qvel layout (5): [vx, vy, vyaw, vtail, vfin]
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import gymnasium as gym
@@ -85,6 +92,7 @@ class FishSwimEnv(gym.Env):
         success_radius: float = 0.08,
         target_theta_range: tuple[float, float] = (-np.pi, np.pi),
         target_theta_offset_range: tuple[float, float] | None = None,
+        sub_distributions: list[dict] | None = None,
         action_history_n: int = 0,
         render_mode: str | None = None,
     ):
@@ -98,12 +106,26 @@ class FishSwimEnv(gym.Env):
         self.success_radius = success_radius
         self.target_theta_range = target_theta_range
         self.target_theta_offset_range = target_theta_offset_range
+        # m4_v20: mixed sampling — sub_distributions = [{"sub_id", "kind"("theta"|"offset"), "range", "weight"}, ...]
+        # 있으면 매 reset마다 weight에 따라 sub 선택 후 그 분포에서 target sample.
+        # info["sub_id"]로 callback이 sub별 reach_rate 측정 (sub trigger).
+        self.sub_distributions = sub_distributions
+        self._current_sub_id: str | None = None
+        if sub_distributions is not None:
+            weights = np.array([s.get("weight", 1.0) for s in sub_distributions], dtype=np.float64)
+            self._sub_probs = weights / weights.sum()
+        else:
+            self._sub_probs = None
         # m4_v14: align_weight 0.012 → 0.05 (회전 incentive 강화, annular 분포 학습용).
         self.align_weight = 0.02 if episode_seconds <= 10.0 else 0.05
         self.action_history_n = max(0, int(action_history_n))
         self._action_history = np.zeros(self.action_history_n, dtype=np.float32)
         self.render_mode = render_mode
         self._renderer: mujoco.Renderer | None = None
+        # view_policy.py가 launch_passive viewer를 여기에 붙이면, step 내부 mj_step
+        # 루프마다 sync + realtime sleep을 하여 4Hz stroboscopic effect 없이 sine wave가 보임.
+        # 학습 시엔 None이라 분기 안 탐.
+        self._viewer = None
 
         self._target_geom_id = mujoco.mj_name2id(
             self.model, mujoco.mjtObj.mjOBJ_GEOM, "target"
@@ -170,7 +192,22 @@ class FishSwimEnv(gym.Env):
         mujoco.mj_resetData(self.model, self.data)
 
         rng = self.np_random
-        if self.target_theta_offset_range is not None:
+        if self.sub_distributions is not None:
+            # m4_v20 mixed sampling: weight 비례로 sub 선택 후 그 분포에서 sample.
+            idx = int(rng.choice(len(self.sub_distributions), p=self._sub_probs))
+            sub = self.sub_distributions[idx]
+            self._current_sub_id = sub["sub_id"]
+            kind = sub["kind"]
+            mn, mx = sub["range"]
+            if kind == "theta":
+                theta = rng.uniform(mn, mx) if mn != mx else mn
+            elif kind == "offset":
+                offset = rng.uniform(mn, mx) if mn != mx else mn
+                sign = 1.0 if rng.uniform() < 0.5 else -1.0
+                theta = np.pi + sign * offset
+            else:
+                raise ValueError(f"unknown sub kind: {kind!r} (expected 'theta' or 'offset')")
+        elif self.target_theta_offset_range is not None:
             mn, mx = self.target_theta_offset_range
             offset = rng.uniform(mn, mx) if mn != mx else mn
             sign = 1.0 if rng.uniform() < 0.5 else -1.0
@@ -207,9 +244,13 @@ class FishSwimEnv(gym.Env):
         clipped = np.clip(action, -1.0, 1.0)
         sf_asym = float(clipped[0])
         # m4_v17: frame_skip 내부에서 매 mj_step마다 5Hz sine ctrl 합성·갱신.
+        timestep = self.model.opt.timestep
         for _ in range(self.frame_skip):
             self.data.ctrl[0] = self._synth_ctrl(sf_asym)
             mujoco.mj_step(self.model, self.data)
+            if self._viewer is not None:
+                self._viewer.sync()
+                time.sleep(timestep)
         if self.action_history_n > 0:
             self._action_history[:-1] = self._action_history[1:]
             self._action_history[-1] = sf_asym
@@ -272,6 +313,8 @@ class FishSwimEnv(gym.Env):
         truncated = self._step_count >= self.max_steps
 
         info = {"distance": distance, "reached": reached, "align": align, "slip_deg": slip_deg}
+        if self._current_sub_id is not None:
+            info["sub_id"] = self._current_sub_id
         return self._get_obs(), reward, terminated, truncated, info
 
     def render(self):
