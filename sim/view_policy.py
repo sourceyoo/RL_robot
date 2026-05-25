@@ -51,6 +51,8 @@ def main():
     p.add_argument("--episode-seconds", type=float, default=10.0)
     p.add_argument("--action-history-n", type=int, default=None,
                    help="None이면 SAC 모델에서 자동 추론")
+    p.add_argument("--max-episodes", type=int, default=0,
+                   help="이 ep 수만큼 끝나면 viewer 자동 종료 (0=무한).")
     args = p.parse_args()
 
     sac = None
@@ -128,6 +130,9 @@ def main():
                 print(f"  [ep{ep_count} 끝] reward={ep_reward:.3f}  "
                       f"final_dist={info['distance']:.3f}  reached={info['reached']}  "
                       f"누적 reach: {ep_reached_count}/{ep_count}")
+                if args.max_episodes > 0 and ep_count >= args.max_episodes:
+                    print(f"[done] {args.max_episodes} ep 완료. viewer 종료.")
+                    break
                 obs, _ = env.reset(seed=args.seed + ep_count)
                 ep_reward = 0.0
                 step = 0

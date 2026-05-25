@@ -57,21 +57,17 @@ STAGES = [
         "episode_seconds": 20.0,
         "ent_floor": 0.002,
     },
-    {
-        "tag": "s2_anchor",
-        "desc": "Stage 2 — 안착 (success_radius 0.04)",
-        "theta_min": PI, "theta_max": PI,
-        "success_radius": 0.04,
-        "max_steps": 1_000_000,
-        "episode_seconds": 20.0,
-        "ent_floor": 0.002,
-    },
+    # m4_v17: s2_anchor 제거 — amp 고정 1.0으로 정밀 정지 학습 불가능. 본질이 s1 sr 0.04 버전이라 의미 없음.
     # Stage 3 전체 ep_seconds 60s: m4 fluidcoef 변경 후 추진 속도 ~50%↓·yaw rate 1/3.6↓
     # 보정 (이전 30s에서 2배). yaw rate 1.27°/s × 60s = 76° 회전 여유.
+    # m4_v13~: annular offset_range로 sampling (theta = π ± U(min, max), sign random).
+    # inner = 9.2° (= arcsin(0.08/0.5), 직진 자연 한계). 직진 우연 도달률을 평가/학습에서 제거.
+    # 인접 stage disjoint: s3a/b/c/d outer = 이전 stage outer로부터 시작.
     {
         "tag": "s3a_arc15",
-        "desc": "Stage 3a — 좌우 ±15° (θ ∈ π ± π/12)",
-        "theta_min": PI - PI / 12, "theta_max": PI + PI / 12,
+        "desc": "Stage 3a — annular |θ-π| ∈ [9.2°, 15°]",
+        "theta_min": PI - PI / 12, "theta_max": PI + PI / 12,  # legacy (offset_range 있으면 미사용)
+        "theta_offset_min": PI * 9.2 / 180.0, "theta_offset_max": PI / 12,
         "success_radius": 0.08,
         "max_steps": 1_000_000,
         "episode_seconds": 60.0,
@@ -79,8 +75,9 @@ STAGES = [
     },
     {
         "tag": "s3b_arc30",
-        "desc": "Stage 3b — 좌우 ±30° (θ ∈ π ± π/6)",
+        "desc": "Stage 3b — annular |θ-π| ∈ [15°, 30°]",
         "theta_min": PI - PI / 6, "theta_max": PI + PI / 6,
+        "theta_offset_min": PI / 12, "theta_offset_max": PI / 6,
         "success_radius": 0.08,
         "max_steps": 1_000_000,
         "episode_seconds": 60.0,
@@ -91,8 +88,9 @@ STAGES = [
     },
     {
         "tag": "s3c_arc60",
-        "desc": "Stage 3c — 좌우 ±60° (θ ∈ π ± π/3)",
+        "desc": "Stage 3c — annular |θ-π| ∈ [30°, 60°]",
         "theta_min": PI - PI / 3, "theta_max": PI + PI / 3,
+        "theta_offset_min": PI / 6, "theta_offset_max": PI / 3,
         "success_radius": 0.08,
         "max_steps": 1_000_000,
         "episode_seconds": 60.0,
@@ -101,8 +99,9 @@ STAGES = [
     },
     {
         "tag": "s3d_arc90",
-        "desc": "Stage 3d — 좌우 ±90° (θ ∈ [π/2, 3π/2], 전체 head arc)",
+        "desc": "Stage 3d — annular |θ-π| ∈ [60°, 90°]",
         "theta_min": PI / 2, "theta_max": 3 * PI / 2,
+        "theta_offset_min": PI / 3, "theta_offset_max": PI / 2,
         "success_radius": 0.08,
         "max_steps": 1_000_000,
         "episode_seconds": 60.0,
@@ -136,6 +135,8 @@ def main():
     p.add_argument("--det-episodes", type=int, default=100,
                    help="stage 졸업 deterministic eval ep 수 (기본 100, eval_stages.py와 통일). "
                         "TB stochastic 90% trigger 후 이 ep 수로 진짜 90% 확인. 비용 ~8분/회.")
+    p.add_argument("--max-steps", type=int, default=None,
+                   help="모든 stage total_timesteps override. None이면 STAGES default (1M).")
     p.add_argument("--det-cooldown-steps", type=int, default=100_000,
                    help="det eval 미달 시 다음 평가까지 학습 step (기본 100k).")
     args = p.parse_args()
@@ -205,10 +206,14 @@ def main():
             run_dir.mkdir(parents=True, exist_ok=True)
 
             theta_range = (stage["theta_min"], stage["theta_max"])
+            offset_range = None
+            if "theta_offset_min" in stage and "theta_offset_max" in stage:
+                offset_range = (stage["theta_offset_min"], stage["theta_offset_max"])
             ep_sec = stage.get("episode_seconds", 10.0)
             make_env = make_env_factory(theta_range, stage["success_radius"],
                                         episode_seconds=ep_sec,
-                                        action_history_n=ACTION_HISTORY_N)
+                                        action_history_n=ACTION_HISTORY_N,
+                                        target_theta_offset_range=offset_range)
             env = make_vec_env(make_env, n_envs=1)
 
             if prev_model_path is not None:
@@ -236,10 +241,12 @@ def main():
                 callbacks.append(PolicySnapshotCallback(model_holder, sync_every=500))
             # peak 시점 model_best.zip 별도 저장 (후반 후퇴 대비).
             # deterministic check: stochastic 90% trigger 시 det eval로 진짜 90% 확인 (함정 #13).
-            def _det_env_builder(_theta_range=theta_range, _sr=stage["success_radius"],
+            def _det_env_builder(_theta_range=theta_range, _offset_range=offset_range,
+                                 _sr=stage["success_radius"],
                                  _ep=ep_sec, _N=ACTION_HISTORY_N):
                 return FishSwimEnv(
                     target_theta_range=_theta_range,
+                    target_theta_offset_range=_offset_range,
                     success_radius=_sr,
                     episode_seconds=_ep,
                     action_history_n=_N,
@@ -268,7 +275,7 @@ def main():
             cb = CallbackList(callbacks) if callbacks else None
 
             model.learn(
-                total_timesteps=stage["max_steps"],
+                total_timesteps=args.max_steps if args.max_steps is not None else stage["max_steps"],
                 progress_bar=True,
                 callback=cb,
                 reset_num_timesteps=True,           # stage별 step 0부터 카운트

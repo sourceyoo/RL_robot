@@ -99,6 +99,7 @@ world ─[slide_x][slide_y][hinge_yaw]─ base_link (PLA 강체)
 ```
 
 - **액션 = 1D** (단일 motor): `position` actuator on `tail_joint`, ctrlrange `-1..1`, gear=0.349(±20°), kp=100, kv=5, forcerange=±3 Nm (BL4260).
+- **정책 출력 의미 (m4_v17)**: action 1D = `sf_asymmetry` ∈ [-1, 1]. motor ctrl은 `fish_env._synth_ctrl`이 4Hz sine + 시간 비대칭으로 합성 (amp 고정 1.0 → hover 원천 차단). 합성 디테일은 코드.
 - **fin_joint = passive**: stiffness=0.5, damping=1.05e-4. RL이 명령하지 않음.
 
 ### Inertial 값의 출처
@@ -126,11 +127,12 @@ Rotor inertia 추정 ~3e-6 kg·m² motor → **armature (output) ≈ 1.4e-4 kg·
 
 xml에서 tail_joint `damping="0.087" armature="1.4e-4"`, actuator `forcerange="-2.2 2.2"`로 spec 직접 반영. wet (현재 fluid on)은 fluid drag 추가로 더 ↓ 자연 cap.
 
-**6Hz freq cap 메커니즘**: PD/armature spec만으론 sim PD 무한 bandwidth로 freq cap 안 됨 (정책이 25Hz까지 ctrl 가능). `fish_env.py` `frame_skip=42` (dt=0.084s = 6Hz peak-to-peak time)로 정책 decision freq 11.9Hz → **Nyquist 5.95Hz cap**. 정책이 매 step alternate해도 max ctrl freq 6Hz. 실모터 closed-loop control rate(~10~12Hz)와 정합.
+**4Hz carrier 강제 (m4_v17)**: `frame_skip=125` (dt=0.25s = 1 cycle) → 정책 decision rate = carrier 4Hz 일치, 한 env step 동안 sf_asym 일정. 4Hz = 실모터 dry 5.88Hz spec의 68% 안전 margin. 옛 freq cap·collapse 배경은 `docs/training_log_m4.md`.
 
-### 추진 검증 (freq_sweep.py)
+### 추진·회전 검증 (`diagnostics/`)
 
-ctrl=±1 sine 12초: 1~6 Hz 모든 주파수 −x 전진(1Hz −0.49m, 3Hz −2.17m, 6Hz −3.36m). 0.5Hz만 후진.
+- **freq_sweep.py** (motor ctrl 직접 sine, frame_skip=42): 4~6Hz 전진, 0.5~3Hz 후진 (ellipsoid 인공물).
+- **sf_asym_yaw_test.py** (m4_v17 sf 12s sustained): `sf=0` 직진, `sf>0` → head −y 회전, `sf<0` → head +y 회전. 좌우 회전 비대칭 25%.
 
 ---
 
@@ -142,30 +144,29 @@ ctrl=±1 sine 12초: 1~6 Hz 모든 주파수 −x 전진(1Hz −0.49m, 3Hz −2.
 
 ## Python 학습 인프라 — `sim/`
 
-- `fish_env.py` — Gymnasium 환경 클래스 `FishSwimEnv`. 주요 인자: `target_theta_range`, `success_radius`, `episode_seconds`, `action_history_n`. obs **(11 + action_history_n)D**: tail/fin qpos·qvel + world v + sin/cos yaw + target rel + 최근 N step ctrl 이력.
+- `fish_env.py` — Gymnasium 환경 클래스 `FishSwimEnv`. 주요 인자: `target_theta_range`, `success_radius`, `episode_seconds`, `action_history_n`. obs **(13 + action_history_n)D**: tail/fin qpos·qvel + world v + yaw_rate + sin/cos yaw + target rel + |yaw_err| + distance + 최근 N step **sf_asym** 이력. action 1D = sf_asymmetry (m4_v17, motor ctrl 직접 X — `_synth_ctrl`이 4Hz sine 합성).
 - `train.py` — SAC 학습 + 별도 thread viewer. `PolicySnapshotCallback` race-free, `CurriculumStopCallback` 자동 조기 종료, **best-save callback** (reach_rate peak에 `model_best.zip` 저장).
 - `curriculum.py` — 6단계 stage 정의 + `--start-stage`·`--end-stage`로 단일 stage 실행 + `--seed` `--tb-tag` `--runs-subdir` (multi-seed 지원). 사용 규칙은 [핵심 규칙 §2](#2-학습-절차) 참조.
 - `eval_stages.py` — 모델 1개를 모든 stage 분포에서 **deterministic eval** (6 stage × 100 ep, CPU, ~20분). TB callback의 random eval 진동 noise(±10%p)를 회피하고 진짜 졸업 여부 확인. **catastrophic forgetting 측정 필수**.
 - `view_policy.py` — 저장된 정책 viewer rollout.
-- 진단: `diagnostics/freq_sweep.py` (추진 방향), `diagnostics/yaw_test.py` (회전 능력 — v4 핵심). 기타 진단(f_sweep, freq_sweep_locked/norollpitch, multiseg_test, waveform_test)도 `diagnostics/` 하위.
+- 진단 (`diagnostics/`): `freq_sweep.py`·`yaw_test.py`(v4 핵심)·`sf_asym_yaw_test.py`(m4_v17)·`measure_head_wag.py`·`plot_reward_table.py`. 기타 f_sweep/locked/norollpitch/multiseg/waveform_test.
 
 ### Curriculum 학습
 
-단일 모터로 full circle은 어려움 → 6단계 curriculum. 진행은 [§2](#2-학습-절차).
+단일 모터로 full circle은 어려움 → 5단계 curriculum (m4_v17: s2_anchor 제거 — amp 고정으로 정밀 정지 학습 불가). 진행은 [§2](#2-학습-절차).
 
-| Stage | tag | theta | sr | ep_sec | max_steps |
+| stage_num | tag | theta | sr | ep_sec | max_steps (env step, m4_v17) |
 |---|---|---|---|---|---|
-| 1 | s1_forward | π fixed | 0.08 | 20s | 1M |
-| 2 | s2_anchor | π fixed | 0.04 | 20s | 1M |
-| 3a | s3a_arc15 | π ± 15° | 0.08 | 60s | 1M |
-| 3b | s3b_arc30 | π ± 30° | 0.08 | 60s | 1M |
-| 3c | s3c_arc60 | π ± 60° | 0.08 | 60s | 1M |
-| 3d | s3d_arc90 | π ± 90° | 0.08 | 60s | 1M |
+| 1 | s1_forward | π fixed | 0.08 | 20s | 80 |
+| 2 | s3a_arc15 | π ± 15° | 0.08 | 60s | 240 |
+| 3 | s3b_arc30 | π ± 30° | 0.08 | 60s | 240 |
+| 4 | s3c_arc60 | π ± 60° | 0.08 | 60s | 240 |
+| 5 | s3d_arc90 | π ± 90° | 0.08 | 60s | 240 |
 
-> max_steps는 안전장치(도달 못해도 강제 진행) — `CurriculumStopCallback`이 90% 졸업 시 조기 종료.
-> ep_sec은 m4 환경(fluidcoef·frame_skip 적용)의 추진 속도 ~50%↓·yaw rate ↓ 보정 (s1·s2 10s→20s, s3a~d 30s→60s).
+> max_steps는 안전장치 — `CurriculumStopCallback`이 90% 졸업 시 조기 종료.
+> ep_sec: m4 환경 추진 속도·yaw rate 보정값. s2 제거로 stage 번호 재매핑(옛 3a~d → 2~5).
 
-multi-seed 예 (m4 환경): `python3 curriculum.py --start-stage 4 --end-stage 4 --seed 0 --tb-tag m4_v1_seed0 --runs-subdir m4_v1_seed0`
+multi-seed 예: `python3 curriculum.py --start-stage 2 --end-stage 2 --seed 0 --tb-tag m4_v17_seed0 --runs-subdir m4_v17_seed0`
 
 ---
 
