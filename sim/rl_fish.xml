@@ -1,7 +1,7 @@
 <mujoco model="rl_fish">
   <compiler angle="radian" meshdir="../fish_urdf/RL_SIM_MODE_3_description/meshes/"/>
 
-  <option timestep="0.002" integrator="implicitfast" density="1000" viscosity="0.001">
+  <option timestep="0.002" integrator="implicit"     density="1000" viscosity="0.001">
     <flag gravity="disable"/>
   </option>
 
@@ -85,7 +85,8 @@
                  limited="true" solreflimit="0.005 1" solimplimit="0.95 0.99 0.001"/>
           <geom pos="-0.201817 0 0.047025"
                 type="mesh" mesh="fin_1"
-                mass="0.024" material="fiberglass"/>
+                mass="0.024"
+                material="fiberglass"/>
         </body>
       </body>
     </body>

@@ -51,12 +51,10 @@ KUFIsh_III (사용자 자체 CAD) 기반 단일 모터(active tail joint + passi
 
 ### 2. 학습 절차
 
-- **단일 stage 학습만**: `curriculum.py --start-stage N --end-stage N`. default 자동 진행(6 stage 끝까지) **사용 금지**.
-- **stage 졸업 (자동)**: `CurriculumStopCallback`이 TB stochastic 100 ep `reach_rate ≥ 90%` trigger 후 deterministic eval 100 ep(`--det-episodes` default 100) 통과 시 학습 종료. TB stochastic 정점 false positive(v22/v25-A: TB 90~91% vs det 79~84%) 차단용.
-- ⚠ **다음 stage는 사용자 결정**: callback 종료는 학습 trigger일 뿐. 자동 진행 X.
-- ⚠ **학습 전·후 6 stage deterministic eval 필수** (`sim/eval_stages.py`): 사전 → 진짜 가장 낮은 미달 stage 확정 / 사후 → 학습 stage 재확인 + 이전 stage catastrophic forgetting 점검 (forgetting 시 mixed sampling·rehearsal 후속).
-- ⚠ **카드 우선 대상은 "가장 낮은 미달 stage"** (deterministic 기준). 낮은 stage가 천장이면 위 stage도 천장. claude는 임의로 더 어려운 stage(s3d 등) 우회 금지.
-- **max_steps는 안전장치** (도달 못해도 강제 진행이지만 카드 부족 신호). **Full circle은 제외**.
+- **단일 stage 학습만**: `curriculum.py --start-stage N --end-stage N`. default 자동 진행 **금지**. ⚠ 다음 stage는 사용자 결정.
+- **stage 졸업 (자동)**: `CurriculumStopCallback`이 TB stochastic 100 ep `reach_rate ≥ 90%` trigger 후 deterministic eval 100 ep(`--det-episodes` default 100) 통과 시 종료. TB stochastic 정점 false positive(v22/v25-A: TB 90~91% vs det 79~84%) 차단용.
+- ⚠ **학습 전·후 deterministic eval 필수** (`sim/eval_stages.py`): 사전 → 진짜 가장 낮은 미달 stage 확정 / 사후 → 학습 stage 재확인 + 이전 stage catastrophic forgetting 점검.
+- ⚠ **카드 우선 대상은 "가장 낮은 미달 stage"** (deterministic). 낮은 stage가 천장이면 위 stage도 천장. claude는 임의로 더 어려운 stage(s3d 등) 우회 금지. **max_steps는 안전장치** (카드 부족 신호). Full circle은 제외.
 
 ---
 
@@ -69,11 +67,9 @@ python3 view_policy.py runs/<tag>/model.zip                       # 정책 viewe
 tensorboard --logdir tb_logs/                                     # 학습 곡선 / SSH 백그라운드: `tmux new -s train` + tee log
 ```
 
-### 학습 시간 (RTX 3090, fps ~305)
+### 학습 시간 (RTX 3090, m4_v17 fs=125 기준)
 
-s1: ~100초 / s3a~c: 11~19분 / s3d 500k: ~28분 / s3d 1M: ~55분 / 전체: 2~3시간.
-
-병목은 SAC update + Python overhead 98% (env step만 1.4%). 1M step ≈ 1.8M SAC update.
+s1 ~100초 / s3a~c 11~19분 / s3d 1M ~55분 / 전체 2~3시간. SAC update + Python overhead 98%. m4_cpg_v1 (fs=42)은 step 수 ~3배 → 비례 증가 예상 (실측은 별도).
 
 ## 활성 모델 — `sim/rl_fish.xml`
 
@@ -98,8 +94,8 @@ world ─[slide_x][slide_y][hinge_yaw]─ base_link (PLA 강체)
                                        │           └ fin_1 (fiberglass 0.88mm, 사용자 추정값)
 ```
 
-- **액션 = 1D** (단일 motor): `position` actuator on `tail_joint`, ctrlrange `-1..1`, gear=0.349(±20°), kp=100, kv=5, forcerange=±3 Nm (BL4260).
-- **정책 출력 의미 (m4_v17)**: action 1D = `sf_asymmetry` ∈ [-1, 1]. motor ctrl은 `fish_env._synth_ctrl`이 4Hz sine + 시간 비대칭으로 합성 (amp 고정 1.0 → hover 원천 차단). 합성 디테일은 코드.
+- **액션 = 3D** (m4_cpg_v1, CPG): `position` actuator on `tail_joint`, ctrlrange `-1..1`, gear=0.349(±20°), kp=100, kv=5, forcerange=±2.2 Nm.
+- **정책 출력 의미 (m4_cpg_v1)**: action 3D = `[freq_norm, amp_norm, offset_norm]` ∈ [-1, +1]³. `fish_env._synth_ctrl`이 CPG 합성: `ctrl = clip(amp·sin(2π·phase) + offset, -1, 1)`. phase는 env state로 자동 누적 (oscillator continuity). 매핑: freq ∈ [4, 6] Hz, amp ∈ [0, 1], offset ∈ [-1, +1] (= ±20° bias). 옛 m4_v17 sf_asymmetry 1D는 offset으로 대체되어 제거.
 - **fin_joint = passive**: stiffness=0.5, damping=1.05e-4. RL이 명령하지 않음.
 
 ### Inertial 값의 출처
@@ -122,17 +118,14 @@ base는 사용자 실물 측정값, tail·fin은 사용자 추정값. (수정 �
 | Rated RPM | 3270 | 481 = 8.0 Hz |
 | **사용자 실측 (dry 6Hz)** | **2400 rpm** | 352 rpm = 5.88 Hz |
 
-KT=0.137 Nm/A, R=8 Ω → **back-EMF damping (output) = KT²/R × N²·η ≈ 0.087 Nm·s/rad**.
-Rotor inertia 추정 ~3e-6 kg·m² motor → **armature (output) ≈ 1.4e-4 kg·m²**.
+KT=0.137 Nm/A, R=8 Ω → back-EMF damping (output) ≈ 0.087 Nm·s/rad. Rotor inertia ~3e-6 (motor) → armature (output) ≈ 1.4e-4 kg·m². xml 직접 반영 (`damping="0.087" armature="1.4e-4"`, forcerange ±2.2). wet은 fluid drag 추가로 더 ↓ 자연 cap.
 
-xml에서 tail_joint `damping="0.087" armature="1.4e-4"`, actuator `forcerange="-2.2 2.2"`로 spec 직접 반영. wet (현재 fluid on)은 fluid drag 추가로 더 ↓ 자연 cap.
-
-**4Hz carrier 강제 (m4_v17)**: `frame_skip=125` (dt=0.25s = 1 cycle) → 정책 decision rate = carrier 4Hz 일치, 한 env step 동안 sf_asym 일정. 4Hz = 실모터 dry 5.88Hz spec의 68% 안전 margin. 옛 freq cap·collapse 배경은 `docs/training_log_m4.md`.
+**CPG 정책 결정 rate (m4_cpg_v1)**: `frame_skip=42` (dt=0.084s, **12Hz**). amp·offset fine ctrl 자유도 ↑. 옛 m4_v17의 4Hz carrier (fs=125, dt 0.25s)에서 변경. freq ∈ [4, 6] Hz는 실모터 dry 5.88Hz spec 기준 안전 margin. sine 깨짐은 reward SMOOTH_W로 차단.
 
 ### 추진·회전 검증 (`diagnostics/`)
 
-- **freq_sweep.py** (motor ctrl 직접 sine, frame_skip=42): 4~6Hz 전진, 0.5~3Hz 후진 (ellipsoid 인공물).
-- **sf_asym_yaw_test.py** (m4_v17 sf 12s sustained): `sf=0` 직진, `sf>0` → head −y 회전, `sf<0` → head +y 회전. 좌우 회전 비대칭 25%.
+- **freq_sweep.py** (motor ctrl 직접 sine, fs=42): 4~6Hz 전진, 0.5~3Hz 후진 (ellipsoid 인공물).
+- **sf_asym_yaw_test.py** (구 m4_v17 sf 진단): m4_cpg_v1에서 sf 제거 — CPG 3D 버전 진단 도구는 후속 카드.
 
 ---
 
@@ -144,67 +137,40 @@ xml에서 tail_joint `damping="0.087" armature="1.4e-4"`, actuator `forcerange="
 
 ## Python 학습 인프라 — `sim/`
 
-- `fish_env.py` — Gymnasium 환경 클래스 `FishSwimEnv`. 주요 인자: `target_theta_range`, `success_radius`, `episode_seconds`, `action_history_n`. obs **(13 + action_history_n)D**: tail/fin qpos·qvel + world v + yaw_rate + sin/cos yaw + target rel + |yaw_err| + distance + 최근 N step **sf_asym** 이력. action 1D = sf_asymmetry (m4_v17, motor ctrl 직접 X — `_synth_ctrl`이 4Hz sine 합성).
-- `train.py` — SAC 학습 + 별도 thread viewer. `PolicySnapshotCallback` race-free, `CurriculumStopCallback` 자동 조기 종료, **best-save callback** (reach_rate peak에 `model_best.zip` 저장).
-- `curriculum.py` — 6단계 stage 정의 + `--start-stage`·`--end-stage`로 단일 stage 실행 + `--seed` `--tb-tag` `--runs-subdir` (multi-seed 지원). 사용 규칙은 [핵심 규칙 §2](#2-학습-절차) 참조.
-- `eval_stages.py` — 모델 1개를 모든 stage 분포에서 **deterministic eval** (6 stage × 100 ep, CPU, ~20분). TB callback의 random eval 진동 noise(±10%p)를 회피하고 진짜 졸업 여부 확인. **catastrophic forgetting 측정 필수**.
-- `view_policy.py` — 저장된 정책 viewer rollout.
-- 진단 (`diagnostics/`): `freq_sweep.py`·`yaw_test.py`(v4 핵심)·`sf_asym_yaw_test.py`(m4_v17)·`measure_head_wag.py`·`plot_reward_table.py`. 기타 f_sweep/locked/norollpitch/multiseg/waveform_test.
+- `fish_env.py` — `FishSwimEnv`. obs **(13 + 3·action_history_n)D**, action 3D = `[freq, amp, offset]`. `_synth_ctrl`이 CPG sine+offset 합성, phase는 env state로 누적. reward dt-normalized + cumulative W 4x 보정 (= 1/dt_v20, m4_v20 시간당 강도 정확 유지). BACK_PEN_W=40 (시간당 m4_v20 2x), SMOOTH_W=0.05 신규.
+- `train.py` — SAC + thread viewer. `PolicySnapshotCallback` race-free, `CurriculumStopCallback` 조기 종료, best-save callback (reach_rate peak `model_best.zip`).
+- `curriculum.py` — 5단계 stage + `--start-stage`·`--end-stage`·`--seed`·`--tb-tag`·`--runs-subdir` (multi-seed). 규칙은 [§2](#2-학습-절차).
+- `eval_stages.py` — 모든 stage 분포 deterministic eval (5 stage × 100 ep, CPU, ~20분). 졸업 확인·forgetting 측정 필수.
+- `view_policy.py`·진단 (`diagnostics/`): `freq_sweep.py`·`yaw_test.py`·`sf_asym_yaw_test.py`(구 m4_v17)·`measure_head_wag.py`. CPG 3D 진단 도구는 후속.
 
 ### Curriculum 학습
 
-단일 모터로 full circle은 어려움 → 5단계 curriculum (m4_v17: s2_anchor 제거 — amp 고정으로 정밀 정지 학습 불가). 진행은 [§2](#2-학습-절차).
+단일 모터로 full circle은 어려움 → 5단계 curriculum (m4_v17: s2_anchor 제거 — amp 가변 m4_cpg_v1에서도 유지, 정밀 정지 학습은 별도 카드). 진행은 [§2](#2-학습-절차).
 
-| stage_num | tag | theta | sr | ep_sec | max_steps (env step, m4_v17) |
+| stage_num | tag | theta | sr | ep_sec | max_steps (m4_cpg_v1, dt=0.084s) |
 |---|---|---|---|---|---|
-| 1 | s1_forward | π fixed | 0.08 | 20s | 80 |
-| 2 | s3a_arc15 | π ± 15° | 0.08 | 60s | 240 |
-| 3 | s3b_arc30 | π ± 30° | 0.08 | 60s | 240 |
-| 4 | s3c_arc60 | π ± 60° | 0.08 | 60s | 240 |
-| 5 | s3d_arc90 | π ± 90° | 0.08 | 60s | 240 |
+| 1 | s1_forward | π fixed | 0.08 | 20s | 238 |
+| 2 | s3a_arc15 | π ± 15° | 0.08 | 60s | 714 |
+| 3 | s3b_arc30 | π ± 30° | 0.08 | 60s | 714 |
+| 4 | s3c_arc60 | π ± 60° | 0.08 | 60s | 714 |
+| 5 | s3d_arc90 | π ± 90° | 0.08 | 60s | 714 |
 
 > max_steps는 안전장치 — `CurriculumStopCallback`이 90% 졸업 시 조기 종료.
-> ep_sec: m4 환경 추진 속도·yaw rate 보정값. s2 제거로 stage 번호 재매핑(옛 3a~d → 2~5).
+> ep_sec: m4 환경 보정값. s2 제거로 stage 번호 재매핑(옛 3a~d → 2~5). m4_cpg_v1 fs=42로 step 수 m4_v17 (fs=125)의 ~3배.
 
-multi-seed 예: `python3 curriculum.py --start-stage 2 --end-stage 2 --seed 0 --tb-tag m4_v17_seed0 --runs-subdir m4_v17_seed0`
-
----
-
-## 학습 history·다음 카드 후보
-
-→ [`docs/training_log.md`](docs/training_log.md) (버전별 변경·통찰·RL 카드 함정 #7~·카드 후보·현재 상태). s3d_90 라인(구 v22~v30 분리) → [`docs/s3d_90_line.md`](docs/s3d_90_line.md). m4 환경(frame_skip 42 + V2 spec) → [`docs/training_log_m4.md`](docs/training_log_m4.md).
+multi-seed 예: `python3 curriculum.py --start-stage 1 --end-stage 1 --seed 0 --tb-tag m4_cpg_v1_seed0 --runs-subdir m4_cpg_v1_seed0`
 
 ---
 
-## TensorBoard 메트릭 (`tb_logs/<tag>/`)
+## 학습 운영
 
-`rollout/ep_rew_mean`·`ep_len_mean` / `train/{critic_loss,actor_loss,ent_coef}` / `fish/{success_rate,final_distance,episode_seconds,avg_align}`.
-
-진단: α 5만 step 안 0.001↓ → 탐색 부족 / ep_len_mean=max → 도달 X / avg_align 높 + success 낮 → "정렬만" mode.
-
----
-
-## SAC
-
-`stable-baselines3.SAC` Twin Q + auto α + replay 200k. HP: LR=3e-4, batch=256, γ=0.99, τ=0.005, `ent_coef="auto_0.1"` (floor는 EntCoefFloorCallback).
-
----
-
-## RL 카드 시행착오·정착
-
-학습 카드 정착 = v21 (N=20·ent_floor 차등·yaw \|·\|·0.005). 추진 실패 사례·함정 #7~#17·s3d_90 라인 → [`docs/training_log.md`](docs/training_log.md).
-
----
+- **history·카드 후보** → [`docs/training_log.md`](docs/training_log.md) (버전별 변경·함정 #7~·m4_cpg_v1). s3d_90 라인 → [`docs/s3d_90_line.md`](docs/s3d_90_line.md). m4 환경 → [`docs/training_log_m4.md`](docs/training_log_m4.md). 카드 정착 = v21 (N=20·ent_floor 차등·yaw \|·\|·0.005).
+- **TensorBoard** (`tb_logs/<tag>/`): `rollout/ep_rew_mean`·`ep_len_mean` / `train/{critic_loss,actor_loss,ent_coef}` / `fish/{success_rate,final_distance,episode_seconds,avg_align}`. 진단: α 5만 step 안 0.001↓ → 탐색 부족 / ep_len_mean=max → 도달 X / avg_align 높 + success 낮 → "정렬만" mode.
+- **SAC**: `stable-baselines3.SAC` Twin Q + auto α + replay 200k. HP: LR=3e-4, batch=256, γ=0.99, τ=0.005, `ent_coef="auto_0.1"` (floor는 EntCoefFloorCallback).
+- **백업**: `gh release create models-vN ... runs-models-vN.tar.gz` / 복원 `gh release download models-vN -p '*.tar.gz' && tar -xzf ... -C sim/`.
 
 ## RL 학습 시 주의
 
-- **fluidshape="ellipsoid" 한계**. vortex shedding 못 모델 → sim2real 격차. 개선은 Lighthill `mjcb_passive` 또는 ANN surrogate.
-- **보상 forward = world −x**. 정책이 +x로 가면 환경 인덱스 잘못된 것.
-- **3DOF yaw 누적**: fluid asymmetry로 한쪽 도는 경향. RL이 보정 가능.
-- **Curriculum init_from**: 이전 stage "직진 편향"이면 Stage 3에서 한쪽 mode만 학습 위험.
-
----
-
-## 백업·릴리스
-
-`gh release create models-vN ... runs-models-vN.tar.gz` / 복원 `gh release download models-vN -p '*.tar.gz' && tar -xzf ... -C sim/`. 상세·인덱스 → [`docs/training_log.md`](docs/training_log.md).
+- **fluidshape="ellipsoid" 한계**: vortex shedding 못 모델 → sim2real 격차. 개선은 Lighthill `mjcb_passive` 또는 ANN surrogate.
+- **보상 forward = world −x**. +x로 가면 환경 인덱스 잘못. **3DOF yaw 누적**: fluid asymmetry로 한쪽 도는 경향(RL 보정 가능). **Curriculum init_from**: 이전 stage 직진 편향이면 Stage 3에서 한쪽 mode만 학습 위험.
+- **m4_cpg_v1 hover cheat risk**: amp ∈ [0, 1] full range. BACK_PEN_W=40·SMOOTH_W=0.05·time_pen 으로 간접 차단. 학습 결과 보고 amp 하한·페널티 후속.

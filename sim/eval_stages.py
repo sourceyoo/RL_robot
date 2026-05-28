@@ -176,8 +176,15 @@ def main():
     args = p.parse_args()
 
     model_path = Path(args.model).resolve()
-    # runs/<카드명>/<학습stage>/model.zip 가정 → 카드명·stage 추출.
-    card_name = model_path.parent.parent.name
+    # runs/<카드명>/<학습stage>/model.zip 또는 runs/<카드명>/<seedN>/<학습stage>/model.zip 모두 지원.
+    # card_name = runs/ 이후 모델 부모 path 전체 (예: "m4_cpg_v2/seed0").
+    sim_root = Path(__file__).resolve().parent
+    runs_root = sim_root / "runs"
+    try:
+        card_name = str(model_path.parent.parent.relative_to(runs_root))
+    except ValueError:
+        # runs/ 밖에 있는 모델 호출 시 fallback
+        card_name = model_path.parent.parent.name
     train_stage = model_path.parent.name
 
     # stages 결정: --only-stage > --include-future > default (train_stage까지)
@@ -197,7 +204,6 @@ def main():
     now = datetime.datetime.now()
     timestamp = now.strftime("%Y%m%d_%H%M%S")     # 파일명
     timestamp_human = now.strftime("%Y-%m-%d %H:%M:%S")  # plot 표시용
-    sim_root = Path(__file__).resolve().parent
     # plot 저장 구조: plots/<card>/<eval_stage>/{ts}_model_{train_stage}.png
     # 폴더 = 평가 대상 stage. 같은 stage의 여러 시점·모델 비교 누적 가능.
     plots_root = sim_root / "plots" / card_name

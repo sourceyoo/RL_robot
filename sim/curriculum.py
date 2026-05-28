@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import argparse
 import math
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -169,7 +171,8 @@ def main():
 
     sim_dir = Path(__file__).parent
     runs_dir = sim_dir / "runs"
-    plot_dir = sim_dir / "plots"
+    # multi-seed 시 seed별 plot 충돌 방지 (tb-tag 별 sub-dir).
+    plot_dir = sim_dir / "plots" / args.tb_tag
     # 카드 버전·seed별 tensorboard log 분리: --tb-tag로 디렉토리 명시.
     tb_dir = sim_dir / "tb_logs" / args.tb_tag
     tb_dir.mkdir(parents=True, exist_ok=True)
@@ -325,6 +328,15 @@ def main():
                   f"(size={model.replay_buffer.size():,})")
 
             save_training_plots(tb_dir, stage["tag"], plot_dir)
+
+            # m4_cpg_v2: stage 종료 시 trajectory plot 자동 생성 (eval_stages.py).
+            # 학습 stage 까지만 deterministic eval (default 100 ep × stage 수).
+            eval_script = Path(__file__).parent / "eval_stages.py"
+            print(f"[curriculum] auto-eval (trajectory plot 생성) → {eval_script.name}")
+            subprocess.run(
+                [sys.executable, str(eval_script), str(run_dir / "model.zip")],
+                check=False,
+            )
 
             prev_model_path = run_dir / "model.zip"
             env.close()
