@@ -34,17 +34,18 @@ target 분포 (m4_v20): sub_distributions 인자로 mixed sampling 지원.
 보상 (m4_cpg_v1, dt-normalized): step-cumulative 항에 dt 곱 (시간 적분 의미, fs 변경 robust).
   cumulative W 는 m4_v20 시간당 강도 정확 유지를 위해 모두 4x 보정 (= 1/dt_v20 = 1/0.25, 수학적 정확).
   progress·5.0 + reach·10                                                  # event 항 (dt 곱 X)
-  + (align_weight·align + ALIGN_VEL_W·align_vel + YAW_SIGN_W·yaw_rate·sign(yaw_err)) · dt   (align·align_vel 둘 다 |v|>0.02 deadzone)
+    progress = min(head_forward, dist_reduction)  (m4_cpg_v7: 게걸음 차단. head_forward=delta·머리방향, dist_reduction=거리 단축)
+  + (align_weight·align + YAW_SIGN_W·yaw_rate·sign(yaw_err)) · dt   (align |v|>0.02 deadzone)
   − TIME_PEN_W·distance·current_time · dt
   − BACK_PEN_W·(−cos(head,v))·|v| · dt   (cos<0이고 |v|>0.05일 때만)
   − SMOOTH_W·||action_t − action_{t-1}||² · dt
+  − LAT_AVG_W·|v_lat_avg| · dt   (m4_cpg_v5: 3 step cycle 평균 lateral velocity → 진짜 sideslip)
 
   - align_weight: 10s ep 0.12, 그 외(20s·60s) 0.30 (m4_cpg_v2: m4_cpg_v1 의 0.08/0.20 에서 1.5x).
-    align = cos(머리, 목표). ALIGN_VEL_W 동일 가중치였던 m4_cpg_v1 에서 sideslip mode 학습 →
-    머리 정렬을 ALIGN_VEL 대비 1.5x 우선 → sideslip 억제 의도.
+    align = cos(머리, 목표).
     m4_cpg_v3 s3c·d 의 amp→0 + yaw-only mode collapse 차단 (m4_cpg_v4): |v|>0.02 deadzone.
-    align_vel·back_pen 과 동일 임계로 통일 (정지 시 dense 보상 모두 0 → "정렬+정지" trap 제거).
-  - ALIGN_VEL_W=0.20 (m4_v20 0.05 × 4): align_vel = cos(v, 목표). fluid drift cancel 압력. deadzone v_norm>0.02.
+    back_pen 과 동일 임계로 통일 (정지 시 dense 보상 모두 0 → "정렬+정지" trap 제거).
+  - m4_cpg_v7: ALIGN_VEL_W(align_vel) 제거. progress min(head_forward) 가 머리방향 추진 역할 대체.
   - YAW_SIGN_W=0.020 (m4_v20 0.005 × 4): 목표 방향 yaw rate incentive.
   - TIME_PEN_W=4e-5 (m4_v20 1e-5 × 4): distance·time 누적 페널티.
   - BACK_PEN_W=40.0 (m4_v20 5.0 × 4 × 2): 보정 + 사용자 강화 2x → 시간당 m4_v20 의 정확 2x.
@@ -52,6 +53,9 @@ target 분포 (m4_v20): sub_distributions 인자로 mixed sampling 지원.
     m4_v18c s3c·d에서 cycle 변조 저주파 후진 cheat 발견. memory feedback_no_backward.
   - SMOOTH_W=0.05 (m4_cpg_v1 신규): action 변화 페널티. ETH ANYmal 패턴.
     부드러운 정책 출력 유도 → CPG sine 깨짐 차단·motor jerk ↓·sim2real 격차 ↓.
+  - LAT_AVG_W=3.0 (m4_cpg_v5 신규): cycle-평균 |v_lat| 페널티. 3 step (≈1 CPG cycle) 평균이라
+    propulsion side force (좌우 진동, 평균 0) 면제 / 진짜 sideslip (한쪽 미끄러짐) 만 cost.
+    s1 propulsion 단독 시 pen·dt ≈ 7.6e-4 (progress 5e-3 대비 미미), s3c sideslip 시 ≈ 7.6e-3.
 
   m4_v17 제거된 항 (4Hz amp 고정 후 의미 사라짐):
     - ACTION_DIFF_W (ctrl smooth는 sine carrier로 자동 보장)
@@ -87,6 +91,12 @@ IDX_X, IDX_Y, IDX_YAW, IDX_TAIL, IDX_FIN = 0, 1, 2, 3, 4
 FREQ_MIN, FREQ_MAX = 4.0, 6.0
 AMP_MIN, AMP_MAX = 0.0, 1.0
 OFFSET_MIN, OFFSET_MAX = -1.0, 1.0
+
+# m4_cpg_v5: cycle-averaged lateral velocity penalty 용 buffer window.
+# 5Hz CPG → 0.2s/cycle → dt=0.084s → ~2.4 step → 3 step window (= 0.252s ≈ 1 cycle).
+# propulsion side force (좌우 ±진동) 는 cycle 평균 ≈ 0 → 자동 면제.
+# 진짜 sideslip (한쪽 미끄러짐) 은 cycle 평균 유지 → 페널티.
+CYCLE_STEPS = 3
 
 
 class FishSwimEnv(gym.Env):
@@ -128,7 +138,7 @@ class FishSwimEnv(gym.Env):
         # m4_v14: align_weight 0.012 → 0.05 (회전 incentive 강화, annular 분포 학습용).
         # m4_cpg_v1: dt-norm 정확 보정 4x (= 1/dt_v20 = 1/0.25, m4_v20 시간당 강도 정확 유지).
         # 10s: 0.02 → 0.08. 그 외: 0.05 → 0.20.
-        # m4_cpg_v2: sideslip 차단 — align_weight 1.5x (ALIGN_VEL_W 0.20 대비 머리 정렬 우선).
+        # m4_cpg_v2: sideslip 차단 — align_weight 1.5x (머리 정렬 우선). (ALIGN_VEL_W 는 m4_cpg_v7 에서 제거)
         # 10s: 0.08 → 0.12. 그 외: 0.20 → 0.30. critic 우려 (scale 불균형) 반영 — 2x 대신 1.5x.
         self.align_weight = 0.12 if episode_seconds <= 10.0 else 0.30
         self.action_history_n = max(0, int(action_history_n))
@@ -137,6 +147,8 @@ class FishSwimEnv(gym.Env):
         self._cpg_phase = 0.0
         # m4_cpg_v1: action smoothness reward 계산용 (직전 step action).
         self._prev_action = np.zeros(3, dtype=np.float32)
+        # m4_cpg_v5: cycle-평균 lateral velocity buffer (sideslip 페널티용).
+        self._v_lat_buffer = np.zeros(CYCLE_STEPS, dtype=np.float32)
         self.render_mode = render_mode
         self._renderer: mujoco.Renderer | None = None
         # view_policy.py가 launch_passive viewer를 여기에 붙이면, step 내부 mj_step
@@ -171,6 +183,7 @@ class FishSwimEnv(gym.Env):
 
         self._step_count = 0
         self._prev_distance = 0.0
+        self._prev_pos = np.zeros(2)
 
     def _torso_pos(self) -> np.ndarray:
         return self.data.site_xpos[self._torso_site_id].copy()
@@ -240,10 +253,12 @@ class FishSwimEnv(gym.Env):
         mujoco.mj_forward(self.model, self.data)
         self._step_count = 0
         self._prev_distance = self._distance_to_target()
+        self._prev_pos = self._torso_pos()[:2].copy()
         if self.action_history_n > 0:
             self._action_history = np.zeros((self.action_history_n, 3), dtype=np.float32)
         self._cpg_phase = 0.0
         self._prev_action = np.zeros(3, dtype=np.float32)
+        self._v_lat_buffer[:] = 0.0
         return self._get_obs(), {}
 
     def _synth_ctrl(self, freq: float, amp: float, offset: float) -> float:
@@ -272,33 +287,36 @@ class FishSwimEnv(gym.Env):
             self._action_history[:-1] = self._action_history[1:]
             self._action_history[-1] = clipped
 
+        torso_xy = self._torso_pos()[:2]
         distance = self._distance_to_target()
-        progress = self._prev_distance - distance
         reached = distance < self.success_radius
 
         yaw = float(self.data.qpos[IDX_YAW])
         head_dir = np.array([-np.cos(yaw), np.sin(yaw)])
-        rel = self._target_pos()[:2] - self._torso_pos()[:2]
+        rel = self._target_pos()[:2] - torso_xy
         rel_norm = float(np.linalg.norm(rel))
         align = float(np.dot(head_dir, rel / rel_norm)) if rel_norm > 1e-6 else 0.0
         yaw_err_sign = float(np.sign(head_dir[0] * rel[1] - head_dir[1] * rel[0])) if rel_norm > 1e-6 else 0.0
 
+        # m4_cpg_v7: progress = min(머리방향 전진, target 거리 단축). 게걸음(측면)=head 투영 작아 차단,
+        # 머리 반대 전진=거리항 음수로 차단. v6 의 slip-정렬(감점)과 달리 보상 축소라 회전 안 죽임.
+        delta = torso_xy - self._prev_pos
+        head_forward = float(np.dot(delta, head_dir))
+        dist_reduction = self._prev_distance - distance
+        progress = min(head_forward, dist_reduction)
+
         # m4_cpg_v1: cumulative W 모두 dt-norm 정확 보정 4x (= 1/dt_v20 = 1/0.25, 시간당 강도 정확 유지).
         YAW_SIGN_W = 0.020   # m4_v20 0.005 × 4
-        ALIGN_VEL_W = 0.20   # m4_v20 0.05 × 4
         TIME_PEN_W = 4e-5    # m4_v20 1e-5 × 4
         BACK_PEN_W = 40.0    # m4_v20 5.0 × 4 × 2 (강화 2x 포함). 시간당 m4_v20 의 정확히 2x
         SMOOTH_W = 0.05      # m4_cpg_v1 신규 (action smoothness penalty)
         yaw_rate = float(self.data.qvel[IDX_YAW])
         current_time = self._step_count * self.dt
 
-        # m4_v18: velocity align — fluid drift cancel 학습 압력.
+        # m4_cpg_v7: align_vel(head-velocity 정렬) 제거 — progress min(head전진) 이 머리방향 추진 역할 대체.
+        # v_world/v_norm 은 back_pen·lat_pen·slip 통계가 사용하므로 유지.
         v_world = np.array([float(self.data.qvel[IDX_X]), float(self.data.qvel[IDX_Y])])
         v_norm = float(np.linalg.norm(v_world))
-        if v_norm > 0.02 and rel_norm > 1e-6:
-            align_vel = float(np.dot(v_world / v_norm, rel / rel_norm))
-        else:
-            align_vel = 0.0
 
         # m4_v19: 후진 강 페널티. cos(head, v) < 0 (slip > 90°)이면 후진.
         # deadzone |v| > 0.05: tail wag 측면진동·정지 면제.
@@ -313,17 +331,29 @@ class FishSwimEnv(gym.Env):
         action_diff_sq = float(np.sum((clipped - self._prev_action) ** 2))
         smooth_pen = SMOOTH_W * action_diff_sq
 
+        # m4_cpg_v5: cycle-평균 lateral velocity = 진짜 sideslip 측정.
+        # head 좌표계의 좌우축(perp) 으로 v_world 투영 → cycle window 평균.
+        # propulsion side force (좌우 ±진동) 는 평균 ≈ 0 → 면제.
+        # 한쪽 미끄러짐 (sideslip) 은 평균 유지 → 페널티.
+        LAT_AVG_W = 3.0
+        perp = np.array([-head_dir[1], head_dir[0]])
+        v_lat_now = float(np.dot(v_world, perp))
+        self._v_lat_buffer[:-1] = self._v_lat_buffer[1:]
+        self._v_lat_buffer[-1] = v_lat_now
+        v_lat_avg = float(np.mean(self._v_lat_buffer))
+        lat_pen = LAT_AVG_W * abs(v_lat_avg)
+
         # m4_cpg_v1: dt-normalized reward. fs 변경에 robust (시간 적분 의미).
         # progress·reach·time_pen 은 이미 dt 효과 내재.
         reward = (
             float(progress * 5.0)
             + (10.0 if reached else 0.0)
             + (self.align_weight * align * (1.0 if v_norm > 0.02 else 0.0)) * self.dt
-            + (ALIGN_VEL_W * align_vel) * self.dt
             + (YAW_SIGN_W * yaw_rate * yaw_err_sign) * self.dt
             - TIME_PEN_W * distance * current_time * self.dt
             - back_pen * self.dt
             - smooth_pen * self.dt
+            - lat_pen * self.dt
         )
 
         # slip 측정 (reward 영향 X, eval sideslip 통계용). v_world·v_norm 위에서 계산.
@@ -334,6 +364,7 @@ class FishSwimEnv(gym.Env):
             slip_deg = 0.0
 
         self._prev_distance = distance
+        self._prev_pos = torso_xy
         self._prev_action = clipped.copy()
         self._step_count += 1
 
