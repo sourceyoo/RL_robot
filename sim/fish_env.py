@@ -33,13 +33,21 @@ target 분포 (m4_v20): sub_distributions 인자로 mixed sampling 지원.
 
 보상 (m4_cpg_v1, dt-normalized): step-cumulative 항에 dt 곱 (시간 적분 의미, fs 변경 robust).
   cumulative W 는 m4_v20 시간당 강도 정확 유지를 위해 모두 4x 보정 (= 1/dt_v20 = 1/0.25, 수학적 정확).
-  progress·5.0 + reach·10                                                  # event 항 (dt 곱 X)
-    progress = min(head_forward, dist_reduction)  (m4_cpg_v7: 게걸음 차단. head_forward=delta·머리방향, dist_reduction=거리 단축)
-  + (align_weight·align + YAW_SIGN_W·yaw_rate·sign(yaw_err)) · dt   (align |v|>0.02 deadzone)
+  progress·5.0 + reach·10·reach_gate + PAR_W·max(head_forward,0)·max(align,0)·turn_ratio   # event/변위 항 (dt 곱 X)
+    progress = dist_reduction · clip(cos_motion,0,1)^P  (m4_cpg_v9: 정렬-전진 게이팅. cos_motion=이동·머리/|이동|,
+      게걸음=옆이동→cos_motion 작아 보상 급감, 순수선회≈1 full, 후퇴는 dist_red 그대로 차단. P=10 (v10, v9의 5에서 ↑))
+    reach_gate = TURN_FLOOR + (1−TURN_FLOOR)·clip((yaw−yaw0)·turn_sign/offset, 0,1)  (m4_cpg_v11 B-1:
+      도달 보너스 선회비율 게이팅. 게걸음(머리 안 돎)→FLOOR(0.4)만, 선회(머리 target쪽 회전)→full. s1(offset≈0)→full)
+    PAR_W·max(head_forward,0)·max(align,0)·turn_ratio (m4_cpg_v15): parallel mode 직접 보상. 복합 게이트.
+      계단식(head_forward≈0)→0, 게걸음(turn_ratio≈0)→0, 과회전(align↓)→감액, 정확→full. PAR_W=12.0.
+      (v13 turn_ratio 단독=과회전 / v14 align 단독=작은각 게걸음 → 반대 약점이라 곱으로 보완)
+  + (align_weight·align·turn_ratio + YAW_SIGN_W·yaw_rate·sign(yaw_err)) · dt   (align |v|>0.02 deadzone)
+    (m4_cpg_v13: align 항도 turn_ratio 게이팅 — 게걸음(turn_ratio≈0)의 align 후원 제거, 선회 정렬은 보존)
   − TIME_PEN_W·distance·current_time · dt
   − BACK_PEN_W·(−cos(head,v))·|v| · dt   (cos<0이고 |v|>0.05일 때만)
   − SMOOTH_W·||action_t − action_{t-1}||² · dt
-  − LAT_AVG_W·|v_lat_avg| · dt   (m4_cpg_v5: 3 step cycle 평균 lateral velocity → 진짜 sideslip)
+  − LAT_AVG_W·|v_lat_avg| · dt   (m4_cpg_v5: 3 step cycle 평균 sideslip, m4_cpg_v16: LAT_AVG_W=4.0)
+      (m4_cpg_v15: turn_ratio 게이팅 제거=항상 켬. v12 게이팅은 turn_ratio↑서 꺼져 "돌며 옆미끄러짐" 허용 → 제거)
 
   - align_weight: 10s ep 0.12, 그 외(20s·60s) 0.30 (m4_cpg_v2: m4_cpg_v1 의 0.08/0.20 에서 1.5x).
     align = cos(머리, 목표).
@@ -56,6 +64,9 @@ target 분포 (m4_v20): sub_distributions 인자로 mixed sampling 지원.
   - LAT_AVG_W=3.0 (m4_cpg_v5 신규): cycle-평균 |v_lat| 페널티. 3 step (≈1 CPG cycle) 평균이라
     propulsion side force (좌우 진동, 평균 0) 면제 / 진짜 sideslip (한쪽 미끄러짐) 만 cost.
     s1 propulsion 단독 시 pen·dt ≈ 7.6e-4 (progress 5e-3 대비 미미), s3c sideslip 시 ≈ 7.6e-3.
+  - turn_ratio = clip((yaw−yaw0)·turn_sign/offset, 0,1) (m4_cpg_v11 B-1): 머리가 target쪽으로 돈 비율.
+    reach_gate(종단, FLOOR=0.4)·lat_pen 게이트(과정, 1−turn_ratio) 공용 신호. 게걸음(0)·선회(1) 직접 구분.
+    m4_cpg_v12: v8 ALIGN_GATE 폐기 — align은 작은 각(s3b 30°)서 게걸음도 높아 식별 실패(게걸음 0.69 > 선회 0.40).
 
   m4_v17 제거된 항 (4Hz amp 고정 후 의미 사라짐):
     - ACTION_DIFF_W (ctrl smooth는 sine carrier로 자동 보장)
@@ -184,6 +195,10 @@ class FishSwimEnv(gym.Env):
         self._step_count = 0
         self._prev_distance = 0.0
         self._prev_pos = np.zeros(2)
+        # m4_cpg_v11 (B-1): reach 선회비율 게이팅용 — ep 시작 yaw·target offset·target쪽 회전부호.
+        self._yaw0 = 0.0
+        self._target_offset = 0.0
+        self._turn_sign = 0.0
 
     def _torso_pos(self) -> np.ndarray:
         return self.data.site_xpos[self._torso_site_id].copy()
@@ -259,6 +274,20 @@ class FishSwimEnv(gym.Env):
         self._cpg_phase = 0.0
         self._prev_action = np.zeros(3, dtype=np.float32)
         self._v_lat_buffer[:] = 0.0
+        # m4_cpg_v11 (B-1): ep 시작 머리방향 기준 target offset·회전부호 고정 (reach 게이팅용).
+        yaw0 = float(self.data.qpos[IDX_YAW])
+        head_dir0 = np.array([-np.cos(yaw0), np.sin(yaw0)])
+        rel0 = self._target_pos()[:2] - self._torso_pos()[:2]
+        rel0_norm = float(np.linalg.norm(rel0))
+        self._yaw0 = yaw0
+        if rel0_norm > 1e-6:
+            align0 = float(np.dot(head_dir0, rel0 / rel0_norm))
+            self._target_offset = float(np.arccos(np.clip(align0, -1.0, 1.0)))
+            # head_dir=[-cos,sin] 매핑상 yaw 증가 = 머리 시계방향 → cross 부호 반전해야 "target쪽 yaw 변화>0".
+            self._turn_sign = -float(np.sign(head_dir0[0] * rel0[1] - head_dir0[1] * rel0[0]))
+        else:
+            self._target_offset = 0.0
+            self._turn_sign = 0.0
         return self._get_obs(), {}
 
     def _synth_ctrl(self, freq: float, amp: float, offset: float) -> float:
@@ -298,12 +327,20 @@ class FishSwimEnv(gym.Env):
         align = float(np.dot(head_dir, rel / rel_norm)) if rel_norm > 1e-6 else 0.0
         yaw_err_sign = float(np.sign(head_dir[0] * rel[1] - head_dir[1] * rel[0])) if rel_norm > 1e-6 else 0.0
 
-        # m4_cpg_v7: progress = min(머리방향 전진, target 거리 단축). 게걸음(측면)=head 투영 작아 차단,
-        # 머리 반대 전진=거리항 음수로 차단. v6 의 slip-정렬(감점)과 달리 보상 축소라 회전 안 죽임.
+        # m4_cpg_v9: 정렬-전진 게이팅. cos_motion = 이동방향이 머리방향과 정렬된 정도(이동·머리/|이동|).
+        # 전진(dist_red>0)은 cos_motion^P 가중 → 게걸음(옆이동=cos_motion 작음) 보상 급감, 순수선회(≈1) full.
+        # 호버링(delta≈0→dist_red≈0)은 progress≈0 이라 trap 없음(페널티 아님). 후퇴(dist_red<0)는 gate 안 곱해 그대로 차단.
+        # v7 min 은 s3b(cos30°=0.87) 둔감해 게걸음 13%만 깎였음 → P 거듭제곱으로 날카롭게.
+        # m4_cpg_v10: P=5(v9) 에서 게걸음이 cos_motion 0.917 로 게이트 회피(선회비율 0.26 정체) → P↑로 분리 강화.
+        #   P=10: 게걸음 0.917^10=0.42 (보상 급감) vs 순수선회 0.99^10=0.90 (유지). 물리 한계면 도달률↓로 식별.
+        PROGRESS_P = 10
         delta = torso_xy - self._prev_pos
+        delta_norm = float(np.linalg.norm(delta))
         head_forward = float(np.dot(delta, head_dir))
+        cos_motion = head_forward / (delta_norm + 1e-8)
         dist_reduction = self._prev_distance - distance
-        progress = min(head_forward, dist_reduction)
+        motion_gate = float(np.clip(cos_motion, 0.0, 1.0)) ** PROGRESS_P
+        progress = dist_reduction * motion_gate if dist_reduction > 0 else dist_reduction
 
         # m4_cpg_v1: cumulative W 모두 dt-norm 정확 보정 4x (= 1/dt_v20 = 1/0.25, 시간당 강도 정확 유지).
         YAW_SIGN_W = 0.020   # m4_v20 0.005 × 4
@@ -331,11 +368,28 @@ class FishSwimEnv(gym.Env):
         action_diff_sq = float(np.sum((clipped - self._prev_action) ** 2))
         smooth_pen = SMOOTH_W * action_diff_sq
 
-        # m4_cpg_v5: cycle-평균 lateral velocity = 진짜 sideslip 측정.
-        # head 좌표계의 좌우축(perp) 으로 v_world 투영 → cycle window 평균.
-        # propulsion side force (좌우 ±진동) 는 평균 ≈ 0 → 면제.
-        # 한쪽 미끄러짐 (sideslip) 은 평균 유지 → 페널티.
-        LAT_AVG_W = 3.0
+        # m4_cpg_v11 (B-1): 머리가 target쪽으로 돈 비율 turn_ratio — reach·lat_pen 공용 게이트.
+        # (yaw−yaw0)·turn_sign / offset. 게걸음(yaw≈yaw0)→0, 선회(yaw≈offset)→1. clip[0,1](역/과회전 차단).
+        # head_dir=[-cos,sin] 매핑상 turn_sign 부호 반전 적용됨(reset). offset≈0(s1 직진)→1. head wag 1.3°라 안정.
+        if self._target_offset > 1e-3:
+            turn_ratio = float(np.clip((yaw - self._yaw0) * self._turn_sign / self._target_offset, 0.0, 1.0))
+        else:
+            turn_ratio = 1.0
+        # reach 게이팅(B-1): 게걸음 도달 감액·선회 full. FLOOR=0.4 → 게걸음도 4.0>호버링(0). reach 도달시만.
+        TURN_FLOOR = 0.4
+        reach_gate = TURN_FLOOR + (1.0 - TURN_FLOOR) * turn_ratio
+
+        # m4_cpg_v15: parallel mode 직접 보상 — 복합 게이트 head_forward·align·turn_ratio.
+        # 계단식(head_forward≈0)→0, 게걸음(turn_ratio≈0)→0, 과회전(align↓)→감액, 정확(셋 다 1)→full.
+        # turn_ratio(v13)·align(v14)는 반대 약점(과회전↔작은각 게걸음) → 곱으로 상호 보완. landscape: 게걸음 par 94%↓.
+        PAR_W = 12.0
+        par_reward = PAR_W * max(head_forward, 0.0) * max(align, 0.0) * turn_ratio
+
+        # m4_cpg_v5: cycle-평균 lateral velocity = 진짜 sideslip. propulsion 좌우진동 평균≈0 면제, 한쪽 미끄러짐 유지.
+        # m4_cpg_v15: turn_ratio 게이팅 제거(항상 켬). v12 게이팅은 turn_ratio↑서 lat_pen 꺼져
+        # "머리 돌리며 옆 미끄러짐"(s3b sideslip 35°) 허용 → 제거. cycle평균이라 꼬리질 진동은 여전히 면제(순 sideslip만 벌).
+        # m4_cpg_v16: LAT_AVG_W 6→4. v15(6)은 s3a parallel 완성했으나 큰 각(s3b) 선회 과벌→과소회전·도달률 60%. 강도 완화.
+        LAT_AVG_W = 4.0
         perp = np.array([-head_dir[1], head_dir[0]])
         v_lat_now = float(np.dot(v_world, perp))
         self._v_lat_buffer[:-1] = self._v_lat_buffer[1:]
@@ -347,8 +401,9 @@ class FishSwimEnv(gym.Env):
         # progress·reach·time_pen 은 이미 dt 효과 내재.
         reward = (
             float(progress * 5.0)
-            + (10.0 if reached else 0.0)
-            + (self.align_weight * align * (1.0 if v_norm > 0.02 else 0.0)) * self.dt
+            + (10.0 * reach_gate if reached else 0.0)
+            + par_reward
+            + (self.align_weight * align * turn_ratio * (1.0 if v_norm > 0.02 else 0.0)) * self.dt
             + (YAW_SIGN_W * yaw_rate * yaw_err_sign) * self.dt
             - TIME_PEN_W * distance * current_time * self.dt
             - back_pen * self.dt
