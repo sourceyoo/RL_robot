@@ -71,9 +71,10 @@ STAGES = [
         "theta_min": PI - PI / 12, "theta_max": PI + PI / 12,  # legacy (offset_range 있으면 미사용)
         "theta_offset_min": PI * 9.2 / 180.0, "theta_offset_max": PI / 12,
         "success_radius": 0.08,
-        "max_steps": 1_000_000,
+        "max_steps": 2_000_000,   # m4_cpg_v21: 1M→2M. lat6로 좌 수렴 더 빡빡 → 여유.
         "episode_seconds": 60.0,
-        "ent_floor": 0.002,
+        "ent_floor": 0.008,       # m4_cpg_v21: 0.002→0.008. v19에서 좌 dead 탈출시킨 검증값(탐색 강화).
+        "ent_floor_end": 0.004,   # 0.008→0.004 linear decay: 초반 강탐색(dead 탈출)+후반 곧장 정밀 수렴.
     },
     {
         "tag": "s3b_arc30",

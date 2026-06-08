@@ -274,6 +274,9 @@ class FishSwimEnv(gym.Env):
         self._cpg_phase = 0.0
         self._prev_action = np.zeros(3, dtype=np.float32)
         self._v_lat_buffer[:] = 0.0
+        # m4_cpg_v21: ep 동안 course(진행·target)·머리각 누적 → 종료 시 strict 졸업 판정용.
+        self._course_buf = []
+        self._headang_buf = []
         # m4_cpg_v11 (B-1): ep 시작 머리방향 기준 target offset·회전부호 고정 (reach 게이팅용).
         yaw0 = float(self.data.qpos[IDX_YAW])
         head_dir0 = np.array([-np.cos(yaw0), np.sin(yaw0)])
@@ -389,7 +392,8 @@ class FishSwimEnv(gym.Env):
         # m4_cpg_v15: turn_ratio 게이팅 제거(항상 켬). v12 게이팅은 turn_ratio↑서 lat_pen 꺼져
         # "머리 돌리며 옆 미끄러짐"(s3b sideslip 35°) 허용 → 제거. cycle평균이라 꼬리질 진동은 여전히 면제(순 sideslip만 벌).
         # m4_cpg_v16: LAT_AVG_W 6→4. v15(6)은 s3a parallel 완성했으나 큰 각(s3b) 선회 과벌→과소회전·도달률 60%. 강도 완화.
-        LAT_AVG_W = 4.0
+        # 2026-06-08 v15 롤백: v16~v20(lat4·stop_pen·ent_floor 상향) 모두 좌회전 미해결 → v15(LAT_AVG_W=6)로 환원.
+        LAT_AVG_W = 6.0
         perp = np.array([-head_dir[1], head_dir[0]])
         v_lat_now = float(np.dot(v_world, perp))
         self._v_lat_buffer[:-1] = self._v_lat_buffer[1:]
@@ -415,6 +419,10 @@ class FishSwimEnv(gym.Env):
         if v_norm > 0.02:
             cos_slip = float(np.clip(np.dot(head_dir, v_world / v_norm), -1.0, 1.0))
             slip_deg = float(np.degrees(np.arccos(cos_slip)))
+            # m4_cpg_v21: 졸업 strict 판정용 course(진행·target cos)·머리각(=slip_deg) 누적. reward 영향 X.
+            if rel_norm > 1e-6:
+                self._course_buf.append(float(np.dot(v_world / v_norm, rel / rel_norm)))
+                self._headang_buf.append(slip_deg)
         else:
             slip_deg = 0.0
 
@@ -426,7 +434,15 @@ class FishSwimEnv(gym.Env):
         terminated = bool(reached)
         truncated = self._step_count >= self.max_steps
 
-        info = {"distance": distance, "reached": reached, "align": align, "slip_deg": slip_deg}
+        # m4_cpg_v21: ep 평균 course·머리각으로 strict 성공 판정 (졸업 게이트용 — reached/reward/termination 불변).
+        # 게걸음(course 낮음·머리각 큼) 도달을 졸업에서 거름. 캘리브레이션(v15 우):
+        # course≥0.70 (우 s3b 0.80 통과·좌 게걸음 0.52 탈락), 머리각≤40° (우 s3b 30±4° 통과·게걸음 49° 탈락).
+        course_avg = float(np.mean(self._course_buf)) if self._course_buf else 0.0
+        head_angle_avg = float(np.mean(self._headang_buf)) if self._headang_buf else 90.0
+        success_strict = bool(reached and course_avg >= 0.70 and head_angle_avg <= 40.0)
+        info = {"distance": distance, "reached": reached, "align": align, "slip_deg": slip_deg,
+                "course_avg": course_avg, "head_angle_avg": head_angle_avg,
+                "success_strict": success_strict}
         if self._current_sub_id is not None:
             info["sub_id"] = self._current_sub_id
         return self._get_obs(), reward, terminated, truncated, info

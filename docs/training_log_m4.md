@@ -5,6 +5,7 @@ mode3-planar 브랜치 안에서 환경만 분리. `m4_` prefix로 v22~v33 (mode
 
 > mode3-planar 환경의 v1~v33 history (model3 환경) → [`docs/training_log.md`](training_log.md).
 > s3d_90 라인 → [`docs/s3d_90_line.md`](s3d_90_line.md).
+> **좌/우 선회 진단 (2026-06-08): 곡선 선회 물리 불가(constant 반경≥1.5m)·진단 함정 정리** → [`docs/cpg_turn_diagnosis.md`](cpg_turn_diagnosis.md).
 
 ## 작성 규칙
 
@@ -118,6 +119,30 @@ init = `runs/m4_v1_seed{N}/s1_forward/model.zip` (Stage 1 학습 직후, s2 자�
 | s3b_arc30 | 55% | 57% | 55% | 55.7% ± 0.9% | 31.7% → **+24%p** (일반화 효과) |
 | s3c_arc60 | 29% | 27% | 28% | 28.0% ± 0.8% | 12.0% → **+16%p** |
 | s3d_arc90 | 16% | 17% | 17% | 16.7% ± 0.5% | 6.7% → **+10%p** |
+
+### m4_cpg_v21 (2026-06-09) — 좌회전 곧장 sideslip 달성 (탐색 강화 + strict 졸업, reward 미변경)
+
+**문제**: v15 정책은 좌회전(target −y)을 게걸음(sideslip)으로만 도달 — 머리 −x 고정인 채 −x 직진 후 막판 꺾기(course 0.52·머리각 49°). 도달률만 보는 졸업 기준이 이를 false positive로 통과시킴.
+
+**접근 (사용자 "2번")**: reward **미변경**. ① 탐색 강화 `ent_floor 0.002→0.008` + `ent_floor_end 0.004`(max_steps 동안 선형 decay), `max_steps 1M→2M`. ② 졸업 기준을 strict로 — det eval만 `success_strict = reached & course_avg≥0.70 & head_angle_avg≤40°`(게걸음 차단). stochastic trigger는 `reached` 그대로(느슨 유지). 임계 캘리브레이션 = v15 우 기준(s3a 0.82/23°, s3b 0.80/30°).
+
+**졸업 (det eval strict, 조기 종료)**:
+
+| stage | det eval 추세 | 졸업 step |
+|---|---|---|
+| s3a_arc15 | 60→60→83→**100%** | ~조기 |
+| s3b_arc30 | 59→62→69→74→78→84→**98%** | 630k |
+
+**좌/우 분리 검증 (seed0, 각 stage 100 ep deterministic, `/tmp/v21_lr_strict.py`)**:
+
+| stage | side | n | reach | strict | course μ±σ | 머리각 μ±σ |
+|---|---|---|---|---|---|---|
+| s3a | 좌(−y) | 40 | 100% | 98% | 0.789±0.037 | 26.2±2.9° |
+| s3a | 우(+y) | 60 | 100% | 100% | 0.818±0.017 | 25.0±1.3° |
+| s3b | 좌(−y) | 40 | 100% | 100% | 0.774±0.022 | 28.9±2.2° |
+| s3b | 우(+y) | 60 | 100% | 90% | 0.774±0.038 | 33.6±4.1° |
+
+**결론**: 좌가 v15 우 수준(course 0.77~0.82·머리각 26~29°)을 달성, s3b는 좌(strict 100%·σ 0.022)가 우(90%·σ 0.038)보다 오히려 안정. σ 작아 안정 졸업. v19 좌 게걸음(course 0.52/49°) 완전 해소. **reward 처방 없이 탐색 강화만으로 좌/우 곧장 sideslip** — `cpg_turn_diagnosis.md` 사실 #5("reward 처방 필요") 예상이 틀렸음(정정). forgetting X (s1·s3a·s3b 도달 100%). 단일 seed라 multi-seed 재현은 후속.
 
 ---
 

@@ -217,7 +217,13 @@ class CurriculumStopCallback(BaseCallback):
         return True
 
     def _run_det_eval(self) -> float:
-        """현 정책으로 deterministic eval N ep — reach_rate 반환."""
+        """현 정책으로 deterministic eval N ep — strict 졸업률 반환.
+
+        m4_cpg_v21: 졸업 확정 게이트를 success_strict(도달 AND course≥0.70 AND 머리각≤35°)로.
+        게걸음(머리 −x 고정·옆이동) 도달의 false positive 졸업 차단. stochastic trigger(_on_step)는
+        info["reached"] 그대로 두어 느슨한 trigger 유지 — det eval만 엄격 게이트.
+        success_strict 없는 env(구버전 호환) 시 reached로 fallback.
+        """
         if self._det_env is None:
             self._det_env = self.det_env_fn()
         import time as _t
@@ -230,11 +236,11 @@ class CurriculumStopCallback(BaseCallback):
                 action, _ = self.model.predict(obs, deterministic=True)
                 obs, _r, term, trunc, info = self._det_env.step(action)
                 done = bool(term or trunc)
-            if info.get("reached", False):
+            if info.get("success_strict", info.get("reached", False)):
                 reached += 1
         rate = reached / self.det_episodes
-        print(f"[curriculum] det eval: {reached}/{self.det_episodes} = "
-              f"{rate:.1%} (소요 {_t.time()-t0:.1f}s)")
+        print(f"[curriculum] det eval (strict: 도달&course≥0.70&머리각≤40°): "
+              f"{reached}/{self.det_episodes} = {rate:.1%} (소요 {_t.time()-t0:.1f}s)")
         return rate
 
 
