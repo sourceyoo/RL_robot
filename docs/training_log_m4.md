@@ -162,7 +162,21 @@ init = `runs/m4_v1_seed{N}/s1_forward/model.zip` (Stage 1 학습 직후, s2 자�
 | s3c(~60°) | 좌 | reach100 strict10 c0.568 | reach57 strict5 c0.659 |
 | s3c(~60°) | 우 | reach8 strict0 | reach5 strict0 |
 
-**결론**: **mixed rehearsal로 forgetting 완전 차단** — v21 s3d 최종에서 붕괴됐던 s3a(67→**좌100/우100**)·s3b(40→**좌100/우97**, best 기준)가 곧장(strict) 보존. 가설대로 **s3d만 빼니 forgetting이 사라짐**. **best ≫ final**: best가 s3b 우 곧장(97 vs 74)·s3c 좌 도달(100 vs 57) 모두 우수 — final은 max_steps 끝까지 s3c를 짜내며 s3b 우 곧장이 trade-off됨. → **`model_best.zip`을 v22 대표 모델로 채택**. s3c는 trajectory상 좌 게걸음 도달·우 거의 불가로 **곧장 물리 불가 재확인**([[cpg_turn_physics]]). mixed의 forgetting 방지 효과 첫 실증. multi-seed 재현 후속.
+**결론**: **mixed rehearsal로 forgetting 완전 차단** — v21 s3d 최종에서 붕괴됐던 s3a(67→**좌100/우100**)·s3b(40→**좌100/우97**, best 기준)가 곧장(strict) 보존. 가설대로 **s3d만 빼니 forgetting이 사라짐**. **best ≫ final**: best가 s3b 우 곧장(97 vs 74)·s3c 좌 도달(100 vs 57) 모두 우수 — final은 max_steps 끝까지 s3c를 짜내며 s3b 우 곧장이 trade-off됨. → **`model_best.zip`을 v22 대표 모델로 채택**. s3c는 trajectory상 좌 게걸음 도달·우 거의 불가로 **곧장 물리 불가 재확인**([[cpg_turn_physics]]). mixed의 forgetting 방지 효과 첫 실증.
+
+**multi-seed 재현 (seed0/1/2, model_best, 각 sub 60 ep det, strict %)**:
+
+| sub | side | seed0 | seed1 | seed2 | **mean ± σ** |
+|---|---|---|---|---|---|
+| s1 | 전체 | 100 | 100 | 100 | **100 ± 0** ✓ |
+| s3a | 좌 | 100 | 100 | 100 | **100 ± 0** ✓ |
+| s3a | 우 | 100 | 100 | 100 | **100 ± 0** ✓ |
+| s3b | 좌 | 100 | 100 | 100 | **100 ± 0** ✓ |
+| s3b | 우 | 97 | 62 | 100 | 86.3 ± 17.3 ⚠ |
+| s3c 좌 (reach) | | 100 | 71 | 100 | 90.3 (strict ~5%) |
+| s3c 우 (reach) | | 8 | 10 | 46 | 21.3 (운 의존) |
+
+**multi-seed 결론**: **s1·s3a(좌/우)·s3b 좌는 3-seed 모두 strict 100%·σ=0 → forgetting 방지가 seed-robust** ✓. **s3b 우만 strict 86.3±17.3으로 편차 큼** — 단 course는 3-seed 0.757~0.795로 곧장 유지, 머리각 평균 33~38°가 strict 경계(40°)에 걸려 pass/fail이 출렁이는 경계 효과(곧장 능력 상실 아님). [[feedback_card_variance]]상 s3b 우는 안정 졸업 미흡하나 곧장 자체는 보존. s3c는 곧장 물리 불가가 전 seed 일관, 우측 도달은 seed별 8~46%로 운 의존.
 
 ---
 
