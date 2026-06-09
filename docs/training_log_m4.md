@@ -144,6 +144,26 @@ init = `runs/m4_v1_seed{N}/s1_forward/model.zip` (Stage 1 학습 직후, s2 자�
 
 **결론**: 좌가 v15 우 수준(course 0.77~0.82·머리각 26~29°)을 달성, s3b는 좌(strict 100%·σ 0.022)가 우(90%·σ 0.038)보다 오히려 안정. σ 작아 안정 졸업. v19 좌 게걸음(course 0.52/49°) 완전 해소. **reward 처방 없이 탐색 강화만으로 좌/우 곧장 sideslip** — `cpg_turn_diagnosis.md` 사실 #5("reward 처방 필요") 예상이 틀렸음(정정). forgetting X (s1·s3a·s3b 도달 100%). 단일 seed라 multi-seed 재현은 후속.
 
+### m4_cpg_v22 (2026-06-09) — mixed rehearsal로 s3d forgetting 차단 (s1~s3c 균등 mixed, reward 미변경)
+
+**문제**: v21 검증에서 **s3d(±90°) 학습이 forgetting 주범**으로 확정 (V3: s3c 졸업 모델은 s3a를 course 0.811·strict 100%로 보존했으나, s3d 학습에서만 s3a strict 67%·s3b 40%로 붕괴). replay buffer rehearsal은 이미 모든 순차 stage에 켜져 있었으나 s3d forgetting을 못 막음 — 단독 부족.
+
+**접근**: s3d를 빼고 **s1+s3a+s3b+s3c를 mixed sampling으로 동시 학습** (기존 `s_all_mix` 메커니즘에서 s3d sub만 제거 → 신규 stage 7 `s_mix_abc`, 4 sub 균등 weight). init = v21 s3b 곧장 졸업 모델(좌/우 strict 100% 보존본) + replay rehearsal. reward·termination·success_strict 불변. ent_floor 0.005, max_steps 2M. sub trigger(전 sub reach≥90%)는 s3c 천장 때문에 미발동 → max_steps 소진(~2h, fps 253).
+
+**sub별 좌/우 strict 검증 (seed0, 각 sub 60 ep deterministic, `/tmp/v22_subcheck.py`)**:
+
+| sub | side | model_best | model.zip(final) |
+|---|---|---|---|
+| s1 (0°) | 전체 | reach100 strict**100** c0.885 | reach100 strict**100** c0.872 |
+| s3a(~15°) | 좌 | reach100 strict**100** c0.818 | reach100 strict**100** c0.824 |
+| s3a(~15°) | 우 | reach100 strict**100** c0.836 | reach100 strict**100** c0.786 |
+| s3b(~30°) | 좌 | reach100 strict**100** c0.772 | reach100 strict**100** c0.794 |
+| s3b(~30°) | 우 | reach100 strict**97** c0.795 | reach100 strict**74** c0.727 |
+| s3c(~60°) | 좌 | reach100 strict10 c0.568 | reach57 strict5 c0.659 |
+| s3c(~60°) | 우 | reach8 strict0 | reach5 strict0 |
+
+**결론**: **mixed rehearsal로 forgetting 완전 차단** — v21 s3d 최종에서 붕괴됐던 s3a(67→**좌100/우100**)·s3b(40→**좌100/우97**, best 기준)가 곧장(strict) 보존. 가설대로 **s3d만 빼니 forgetting이 사라짐**. **best ≫ final**: best가 s3b 우 곧장(97 vs 74)·s3c 좌 도달(100 vs 57) 모두 우수 — final은 max_steps 끝까지 s3c를 짜내며 s3b 우 곧장이 trade-off됨. → **`model_best.zip`을 v22 대표 모델로 채택**. s3c는 trajectory상 좌 게걸음 도달·우 거의 불가로 **곧장 물리 불가 재확인**([[cpg_turn_physics]]). mixed의 forgetting 방지 효과 첫 실증. multi-seed 재현 후속.
+
 ---
 
 ## GitHub Release 인덱스 (m4)

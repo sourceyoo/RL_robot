@@ -95,10 +95,11 @@ STAGES = [
         "theta_min": PI - PI / 3, "theta_max": PI + PI / 3,
         "theta_offset_min": PI / 6, "theta_offset_max": PI / 3,
         "success_radius": 0.08,
-        "max_steps": 1_000_000,
+        "max_steps": 2_000_000,   # m4_cpg_v21: 1M→2M (s3a와 동일, strict 졸업 여유).
         "episode_seconds": 60.0,
         # 큰 회전: floor ↑로 narrow mode 깨고 비대칭 ctrl 탐색.
         "ent_floor": 0.008,
+        "ent_floor_end": 0.004,   # m4_cpg_v21: 0.008→0.004 decay (후반 곧장 정밀 수렴).
     },
     {
         "tag": "s3d_arc90",
@@ -106,9 +107,10 @@ STAGES = [
         "theta_min": PI / 2, "theta_max": 3 * PI / 2,
         "theta_offset_min": PI / 3, "theta_offset_max": PI / 2,
         "success_radius": 0.08,
-        "max_steps": 1_000_000,
+        "max_steps": 2_000_000,   # m4_cpg_v21: 1M→2M (s3a와 동일, strict 졸업 여유).
         "episode_seconds": 60.0,
         "ent_floor": 0.010,
+        "ent_floor_end": 0.004,   # m4_cpg_v21: 0.010→0.004 decay (후반 곧장 정밀 수렴).
     },
     # m4_v20: forgetting 회복 stage. 5 sub 균등 mixed sampling + sub trigger
     # (모든 sub의 reach_rate ≥ threshold일 때만 trigger). 마지막 stage에 chain.
@@ -126,6 +128,23 @@ STAGES = [
             {"sub_id": "s3b", "kind": "offset", "range": (PI / 12, PI / 6),         "weight": 1.0},
             {"sub_id": "s3c", "kind": "offset", "range": (PI / 6,  PI / 3),         "weight": 1.0},
             {"sub_id": "s3d", "kind": "offset", "range": (PI / 3,  PI / 2),         "weight": 1.0},
+        ],
+    },
+    # m4_cpg_v22: s3d 제외 mixed (s3d 학습이 forgetting 주범 — V3 확인). s1~s3c 균등 rehearsal로
+    # s3a/s3b 곧장(v21 strict 100%) 보존 + s3c 도달 최대화. s3c는 곧장 물리 불가(V1)라 reach 목표.
+    {
+        "tag": "s_mix_abc",
+        "desc": "Stage 7 — s1+s3a+s3b+s3c mixed (s3d 제외, forgetting 방지)",
+        "theta_min": -PI, "theta_max": PI,  # legacy fallback (sub_distributions 우선)
+        "success_radius": 0.08,
+        "max_steps": 2_000_000,
+        "episode_seconds": 60.0,
+        "ent_floor": 0.005,
+        "sub_distributions": [
+            {"sub_id": "s1",  "kind": "theta",  "range": (PI, PI),                  "weight": 1.0},
+            {"sub_id": "s3a", "kind": "offset", "range": (PI * 9.2 / 180.0, PI / 12), "weight": 1.0},
+            {"sub_id": "s3b", "kind": "offset", "range": (PI / 12, PI / 6),         "weight": 1.0},
+            {"sub_id": "s3c", "kind": "offset", "range": (PI / 6,  PI / 3),         "weight": 1.0},
         ],
     },
 ]

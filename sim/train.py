@@ -219,7 +219,7 @@ class CurriculumStopCallback(BaseCallback):
     def _run_det_eval(self) -> float:
         """현 정책으로 deterministic eval N ep — strict 졸업률 반환.
 
-        m4_cpg_v21: 졸업 확정 게이트를 success_strict(도달 AND course≥0.70 AND 머리각≤35°)로.
+        m4_cpg_v21: 졸업 확정 게이트를 success_strict(도달 AND course≥0.70 AND 머리각≤40°)로.
         게걸음(머리 −x 고정·옆이동) 도달의 false positive 졸업 차단. stochastic trigger(_on_step)는
         info["reached"] 그대로 두어 느슨한 trigger 유지 — det eval만 엄격 게이트.
         success_strict 없는 env(구버전 호환) 시 reached로 fallback.
