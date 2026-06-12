@@ -358,7 +358,7 @@ def save_training_plots(tb_log_root: Path, tag: str, plot_dir: Path) -> None:
 def make_env_factory(target_theta_range, success_radius,
                      episode_seconds=10.0, action_history_n=0,
                      target_theta_offset_range=None,
-                     sub_distributions=None):
+                     sub_distributions=None, target_radius=0.5):
     """env 인자(curriculum용)를 closure로 묶어 SB3가 부를 수 있는 0-arg make_env 반환."""
     def make_env():
         return Monitor(FishSwimEnv(
@@ -368,6 +368,7 @@ def make_env_factory(target_theta_range, success_radius,
             success_radius=success_radius,
             episode_seconds=episode_seconds,
             action_history_n=action_history_n,
+            target_radius=target_radius,
         ))
     return make_env
 

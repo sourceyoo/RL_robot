@@ -96,6 +96,8 @@ STAGES = [
         "theta_min": PI - PI / 3, "theta_max": PI + PI / 3,
         "theta_offset_min": PI / 6, "theta_offset_max": PI / 3,
         "success_radius": 0.08,
+        # m4_cpg_v24: target 0.5→0.7m. 0.5m·60°는 선회반경 한계로 머리 정렬 공간 부족(게걸음) → 거리↑로 확보.
+        "target_radius": 0.7,
         "max_steps": 2_000_000,   # m4_cpg_v21: 1M→2M (s3a와 동일, strict 졸업 여유).
         "episode_seconds": 60.0,
         # 큰 회전: floor ↑로 narrow mode 깨고 비대칭 ctrl 탐색.
@@ -145,7 +147,8 @@ STAGES = [
             {"sub_id": "s1",  "kind": "theta",  "range": (PI, PI),                  "weight": 1.0},
             {"sub_id": "s3a", "kind": "offset", "range": (PI * 9.2 / 180.0, PI / 12), "weight": 1.0},
             {"sub_id": "s3b", "kind": "offset", "range": (PI / 12, PI / 6),         "weight": 1.0},
-            {"sub_id": "s3c", "kind": "offset", "range": (PI / 6,  PI / 3),         "weight": 1.0},
+            # m4_cpg_v24: s3c sub만 0.7m (s3c stage와 일관). 나머지 sub는 base 0.5m.
+            {"sub_id": "s3c", "kind": "offset", "range": (PI / 6,  PI / 3),         "weight": 1.0, "radius": 0.7},
         ],
     },
 ]
@@ -258,7 +261,8 @@ def main():
                                         episode_seconds=ep_sec,
                                         action_history_n=ACTION_HISTORY_N,
                                         target_theta_offset_range=offset_range,
-                                        sub_distributions=sub_distributions)
+                                        sub_distributions=sub_distributions,
+                                        target_radius=stage.get("target_radius", 0.5))
             env = make_vec_env(make_env, n_envs=1)
 
             if prev_model_path is not None:
@@ -299,7 +303,8 @@ def main():
             def _det_env_builder(_theta_range=theta_range, _offset_range=offset_range,
                                  _sub=sub_distributions,
                                  _sr=stage["success_radius"],
-                                 _ep=ep_sec, _N=ACTION_HISTORY_N):
+                                 _ep=ep_sec, _N=ACTION_HISTORY_N,
+                                 _tr=stage.get("target_radius", 0.5)):
                 return FishSwimEnv(
                     target_theta_range=_theta_range,
                     target_theta_offset_range=_offset_range,
@@ -307,6 +312,7 @@ def main():
                     success_radius=_sr,
                     episode_seconds=_ep,
                     action_history_n=_N,
+                    target_radius=_tr,
                 )
             callbacks.append(CurriculumStopCallback(
                 threshold=args.threshold, window=100,

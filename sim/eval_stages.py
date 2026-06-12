@@ -41,7 +41,7 @@ STAGES = [
     # m4_v17: s2_anchor 제거 (amp 고정으로 정밀 정지 학습 불가능, 의미 없는 stage).
     {"tag": "s3a_arc15",  "offset": (PI * 9.2 / 180.0, PI/12),                     "radius": 0.08, "ep_sec": 60.0},
     {"tag": "s3b_arc30",  "offset": (PI/12,            PI/6),                      "radius": 0.08, "ep_sec": 60.0},
-    {"tag": "s3c_arc60",  "offset": (PI/6,             PI/3),                      "radius": 0.08, "ep_sec": 60.0},
+    {"tag": "s3c_arc60",  "offset": (PI/6,             PI/3),                      "radius": 0.08, "ep_sec": 60.0, "target_dist": 0.7},  # m4_cpg_v24: 학습과 동일 0.7m
     {"tag": "s3d_arc90",  "offset": (PI/3,             PI/2),                      "radius": 0.08, "ep_sec": 60.0},
 ]
 
@@ -79,8 +79,9 @@ def plot_stage(ax, stage, episodes):
         ax.plot(e["xs"][-1], e["ys"][-1], marker="o",
                 color=color, ms=5, alpha=0.95, mec="white", mew=0.5)
     ax.plot(0, 0, marker="*", color="black", ms=12, mec="white", mew=0.6, zorder=5)
-    ax.set_xlim(-0.6, 0.6)
-    ax.set_ylim(-0.6, 0.6)
+    lim = max(0.6, stage.get("target_dist", 0.5) + 0.2)  # m4_cpg_v24: 0.7m target도 화면 안에
+    ax.set_xlim(-lim, lim)
+    ax.set_ylim(-lim, lim)
     ax.set_aspect("equal")
     ax.grid(True, alpha=0.3, lw=0.5)
     ax.axhline(0, color="0.85", lw=0.5, zorder=0)
@@ -92,6 +93,7 @@ def eval_stage(model, stage, n_episodes, seed, n_plot):
         episode_seconds=stage["ep_sec"],
         success_radius=stage["radius"],
         action_history_n=ACTION_HISTORY_N,
+        target_radius=stage.get("target_dist", 0.5),  # m4_cpg_v24: s3c=0.7m, 그외 0.5m
     )
     if "offset" in stage:
         env_kwargs["target_theta_offset_range"] = stage["offset"]
@@ -227,7 +229,8 @@ def main():
               f"{r['slip_std_deg']:>6.2f}")
         if plot_eps:
             fig, ax = plt.subplots(1, 1, figsize=(8, 8))
-            plot_stage(ax, {"tag": stage["tag"], "radius": stage["radius"]}, plot_eps)
+            plot_stage(ax, {"tag": stage["tag"], "radius": stage["radius"],
+                            "target_dist": stage.get("target_dist", 0.5)}, plot_eps)
             subtitle = ("world −x = 머리(전진). ★ 시작 (0,0), × target, "
                         "원 = success_radius. 초록=성공, 빨강=실패.")
             fig.suptitle(f"Trajectories — {model_path.name} · {stage['tag']} "

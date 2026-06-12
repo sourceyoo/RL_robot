@@ -133,6 +133,8 @@ class FishSwimEnv(gym.Env):
         self.dt = self.model.opt.timestep * frame_skip
         self.max_steps = int(episode_seconds / self.dt)
         self.target_radius = target_radius
+        # m4_cpg_v24: sub_distributions에 sub별 "radius" 있으면 reset마다 override, 없으면 base 복원.
+        self._base_target_radius = target_radius
         self.success_radius = success_radius
         self.target_theta_range = target_theta_range
         self.target_theta_offset_range = target_theta_offset_range
@@ -242,6 +244,8 @@ class FishSwimEnv(gym.Env):
             idx = int(rng.choice(len(self.sub_distributions), p=self._sub_probs))
             sub = self.sub_distributions[idx]
             self._current_sub_id = sub["sub_id"]
+            # m4_cpg_v24: sub별 거리 (s3c sub만 0.7m). radius 없는 sub는 base(0.5) 유지.
+            self.target_radius = sub.get("radius", self._base_target_radius)
             kind = sub["kind"]
             mn, mx = sub["range"]
             if kind == "theta":
