@@ -30,6 +30,8 @@
 
 8. **★ 좌/우 비대칭 = 물리 아니라 학습 편향** (2026-06-08 확정): constant action 좌(+offset)/우(−offset) 대칭 sweep(s3b)에서 v_td·course·최근접·궤적 모두 거의 대칭 (좌 best 0.110 ≈ 우 best 0.121). `+offset`=아래 횡력, `−offset`=위 횡력이 거울상 (`images/lr_asym_constant.png`: 좌 아래로·우 위로 같은 대각선). fin 위드리프트(#4)는 너무 작아 offset 효과에 묻힘 → "역풍이 좌 실패 주원인"은 과대평가였음(정정). **v15 우 도달/좌 실패(도달 0)는 정책이 좌에서 +offset을 안 쓰는 학습 편향** (mirror 테스트 "offset 반전 시 좌 86% 도달"과 정합). constant는 좌·우 둘 다 곡률 부족 도달 X(0.11)지만 closed-loop 학습이면 도달(우가 증거) → **좌도 학습만 시키면 우와 동일 곧장 sideslip 도달 가능**. (`/tmp/lr_asym.py`, `/tmp/v15_check.py`, `images/v15_left_right.png`)
 
+9. **★ s3c 거리 확대는 해법 아님 + 0.5m 우측은 학습 문제** (V5, 2026-06-09): CEM 거리 sweep(±60°, 0.5~1.5m) — 거리↑로 도달 **더 어려움**(0.5·0.7m 도달, 1.0m·1.5m 미도달). 원인=곡률 아니라 **60s 시간 제약**(trajectory상 1.0m+ 경로가 target 향하다 시간 끝, 곡률로 막힌 게 아님). 가설(거리↑=쉬움) 기각. 단 **0.5m는 좌·우 모두 CEM 도달 가능**(marginal, best 0.078~0.080) → v22 우측 reach 8~46% 낮은 건 물리 아니라 **학습 문제**(정책이 marginal 경로 못 찾음). 처방 = 거리축소 curriculum X, **0.5m 우측 학습 강화**. (`diagnostics/s3c_distance_reachable.py`, `images/v5_s3c_distance_reachable.png`)
+
 ## 목표·처방 방향 (2026-06-08 확정)
 - **목표 = v15/seed0 우회전의 곧장 대각선 sideslip(course 0.80)을 좌우 균등하게.** 곡선 선회(parallel) 아님 — 곡률 한계(#7) 수용.
 - **처방 = reward 재설계가 아니라 좌 학습 유도** (물리 대칭이므로): mirror augmentation(우 성공 경험 offset 반전으로 좌 주입, mirror 86% 근거) / 탐색 강화 / 좌 방향 보상 비대칭. v15 lat_pen=6이 좌를 죽인 것도 재검토.

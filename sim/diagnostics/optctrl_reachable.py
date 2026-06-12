@@ -27,9 +27,10 @@ SR = 0.08
 ANGLES = {"s3a(15°)": 15, "s3b(30°)": 30, "s3c(60°)": 60, "s3d(90°)": 90}
 
 
-def set_target(env, theta):
-    """timevarying_reachable.set_target 복제: target 위치 + turn state 재계산."""
-    r = float(np.linalg.norm(env._target_pos()[:2]))
+def set_target(env, theta, r_target=None):
+    """timevarying_reachable.set_target 복제: target 위치 + turn state 재계산.
+    r_target=None이면 기존 거리 유지 (후방호환), 값 지정 시 그 거리로 target 이동."""
+    r = r_target if r_target is not None else float(np.linalg.norm(env._target_pos()[:2]))
     gid = env._target_geom_id
     env.model.geom_pos[gid] = np.array([r * np.cos(theta), r * np.sin(theta), 0.0])
     mujoco.mj_forward(env.model, env.data)
@@ -44,9 +45,9 @@ def set_target(env, theta):
     env._prev_pos = env._torso_pos()[:2].copy()
 
 
-def rollout(env, theta, params, n_steps, record=False):
+def rollout(env, theta, params, n_steps, record=False, r_target=None):
     env.reset(seed=SEED)
-    set_target(env, theta)
+    set_target(env, theta, r_target)
     segs = params.reshape(K, 3)
     seg_len = max(1, n_steps // K)
     best = env._distance_to_target()
@@ -72,7 +73,7 @@ def rollout(env, theta, params, n_steps, record=False):
     return best, reached
 
 
-def cem(env, theta, n_steps):
+def cem(env, theta, n_steps, r_target=None):
     dim = K * 3
     mean = np.zeros(dim)
     std = np.full(dim, 0.7)
@@ -81,7 +82,7 @@ def cem(env, theta, n_steps):
         samples = np.clip(mean[None] + std[None] * np.random.randn(POP, dim), -1.0, 1.0)
         dists = np.empty(POP)
         for i in range(POP):
-            d, reached = rollout(env, theta, samples[i], n_steps)
+            d, reached = rollout(env, theta, samples[i], n_steps, r_target=r_target)
             dists[i] = 0.0 if reached else d
         order = np.argsort(dists)
         elite = samples[order[:ELITE]]

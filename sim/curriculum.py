@@ -82,12 +82,13 @@ STAGES = [
         "theta_min": PI - PI / 6, "theta_max": PI + PI / 6,
         "theta_offset_min": PI / 12, "theta_offset_max": PI / 6,
         "success_radius": 0.08,
-        "max_steps": 1_000_000,
+        "max_steps": 1_000_000,   # m4_cpg_v23: 1M 유지 (decay over 1M이 곧장 수렴에 적절, 2M는 후반 floor 과대).
         "episode_seconds": 60.0,
-        "ent_floor": 0.003,
-        # ent_floor linear decay 0.003 → 0: 학습 후반 deterministic policy 수렴.
-        # stochastic-deterministic gap 좁히기 (함정 #13 대응).
-        "ent_floor_end": 0.0,
+        # m4_cpg_v23: 0.003→0.008 (s3a/s3c와 floor값 통일). 약탐색이 어려운 각도에서 한쪽 mode로
+        # collapse(v22 s3c 우측 8%)시킨 것 차단 — 강탐색으로 좌우 양 mode 균등 탐색. s3b는 collapse
+        # 미보고지만 s3c init 대칭성 확보용. 곧장 수렴은 decay(→0.004)로.
+        "ent_floor": 0.008,
+        "ent_floor_end": 0.004,   # 0.008→0.004 decay (over 1M): 초반 강탐색(좌우 대칭) + 후반 곧장 수렴.
     },
     {
         "tag": "s3c_arc60",
