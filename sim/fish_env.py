@@ -4,13 +4,13 @@ qpos layout (5): [root_x, root_y, root_yaw, tail_joint, fin_joint]
 qvel layout (5): [vx, vy, vyaw, vtail, vfin]
 부호 규약: world -x = 머리 방향(전진).
 
-관측 (13 + action_history_n·3 차원):
+관측 (13 + action_history_n 차원):
   0 tail_qpos       1 tail_qvel       2 fin_qpos        3 fin_qvel
   4 world vx        5 world vy        6 yaw_rate
   7 sin(yaw)        8 cos(yaw)
   9 target_rel_x    10 target_rel_y   (world frame)
   11 |yaw_err|      12 distance       (v32-C: derived obs 명시)
-  13~ 최근 N step의 normalized action 이력 (freq, amp, offset × N step, flatten)
+  13~ 최근 N step의 normalized action 이력 (꼬리각 1D × N step, flatten)
 
 target 분포 (m4_v20): sub_distributions 인자로 mixed sampling 지원.
   list[dict] — 각 dict {"sub_id", "kind"("theta"|"offset"), "range"(mn,mx), "weight"}.
@@ -18,18 +18,12 @@ target 분포 (m4_v20): sub_distributions 인자로 mixed sampling 지원.
   callback이 sub별 reach_rate 측정해 sub trigger(모든 sub ≥ threshold일 때만 졸업).
   forgetting + 평균 inflated 동시 차단. None이면 기존 단일 분포 logic.
 
-행동 (3차원, m4_cpg_v1): CPG (Central Pattern Generator) 3 요소.
-  action = [freq_norm, amp_norm, offset_norm] ∈ [-1, +1]³
-  매핑 (step 안 inline):
-    freq   = 4 + (a0+1)/2 · 2   ∈ [4, 6] Hz   (fiberglass fin 전진 영역)
-    amp    = (a1+1)/2           ∈ [0, 1]      (full range; hover cheat은 reward로 차단)
-    offset = a2                  ∈ [-1, +1]    (= tail joint ±20° 평균 bias)
-  ctrl 합성 (frame_skip 내부 매 mj_step):
-    ctrl(t) = clip(amp · sin(2π · phase) + offset, -1, 1)
-    phase ← (phase + freq · timestep) mod 1   (oscillator state 누적)
-  의도: CPG 4요소 중 하드웨어에서 의미 있는 3요소 (frequency·amplitude·offset) 를
-        모두 RL action 으로 노출. duty cycle 비대칭(sf_asym, m4_v17~v20) 은 offset 으로
-        회전 ctrl 역할 대체되어 제거. phase 누적으로 freq 변경 시 ctrl 연속.
+행동 (1차원, m4_direct): CPG 제거 — 정책이 꼬리각을 직접 명령.
+  action = [tail_norm] ∈ [-1, +1]   → ctrl = a0 (= tail joint ±20° 직접 위치)
+  적용 (step): frame_skip 동안 zero-order-hold (ctrl 상수 유지), position 서보가 목표각 구동.
+  진동(파형)은 정책이 매 decision step 직접 그려 emergent. decision rate 12Hz(frame_skip=42)
+  유지 → Nyquist 상한 ≈6Hz(= 옛 FREQ_MAX). 하한은 미강제(안 흔들 자유 = emergent).
+  옛 CPG action 3D [freq, amp, offset] 와 _synth_ctrl sine 합성은 제거.
 
 보상 (m4_cpg_v1, dt-normalized): step-cumulative 항에 dt 곱 (시간 적분 의미, fs 변경 robust).
   cumulative W 는 m4_v20 시간당 강도 정확 유지를 위해 모두 4x 보정 (= 1/dt_v20 = 1/0.25, 수학적 정확).
@@ -94,10 +88,8 @@ DEFAULT_XML = str(Path(__file__).parent / "rl_fish.xml")
 # qpos/qvel 인덱스 (3DOF planar + tail + fin)
 IDX_X, IDX_Y, IDX_YAW, IDX_TAIL, IDX_FIN = 0, 1, 2, 3, 4
 
-# m4_cpg_v1: CPG action 3D 범위.
-# freq: fiberglass fin (정착 조합) 전진 영역. 옛 Ecoflex 는 1~6Hz 전 영역 전진했으나 현 모델
-# 은 0.5~3Hz 후진 (ellipsoid 인공물). 실모터 dry 5.88Hz spec 의 68~100% 영역.
-# amp: full range — hover cheat (amp≈0) 위험은 reward time_pen·BACK_PEN 으로 간접 차단.
+# 옛 CPG action 3D 범위. m4_direct에서 env는 미사용(직접제어) — diagnostics import 호환용 유지.
+# freq: fiberglass fin (정착 조합) 전진 영역. 실모터 dry 5.88Hz spec 의 68~100%. amp: [0,1] full.
 # offset: tail joint ctrlrange ±1 (= ±20°) 안 평균 bias.
 FREQ_MIN, FREQ_MAX = 4.0, 6.0
 AMP_MIN, AMP_MAX = 0.0, 1.0
@@ -155,11 +147,10 @@ class FishSwimEnv(gym.Env):
         # 10s: 0.08 → 0.12. 그 외: 0.20 → 0.30. critic 우려 (scale 불균형) 반영 — 2x 대신 1.5x.
         self.align_weight = 0.12 if episode_seconds <= 10.0 else 0.30
         self.action_history_n = max(0, int(action_history_n))
-        # m4_cpg_v1: action 3D 라 history 도 (N, 3). obs 에는 flatten 해서 concat.
-        self._action_history = np.zeros((self.action_history_n, 3), dtype=np.float32)
-        self._cpg_phase = 0.0
+        # m4_direct: action 1D (직접 꼬리각 제어) 라 history 도 (N, 1). obs 에는 flatten 해서 concat.
+        self._action_history = np.zeros((self.action_history_n, 1), dtype=np.float32)
         # m4_cpg_v1: action smoothness reward 계산용 (직전 step action).
-        self._prev_action = np.zeros(3, dtype=np.float32)
+        self._prev_action = np.zeros(1, dtype=np.float32)
         # m4_cpg_v5: cycle-평균 lateral velocity buffer (sideslip 페널티용).
         self._v_lat_buffer = np.zeros(CYCLE_STEPS, dtype=np.float32)
         self.render_mode = render_mode
@@ -185,13 +176,13 @@ class FishSwimEnv(gym.Env):
         if self.model.nu != 1:
             raise RuntimeError(f"기대 nu=1 (단일 motor), 실제 nu={self.model.nu}")
 
-        obs_dim = 13 + self.action_history_n * 3
+        obs_dim = 13 + self.action_history_n
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32
         )
-        # m4_cpg_v1: action 3D = [freq_norm, amp_norm, offset_norm].
+        # m4_direct: action 1D = 직접 꼬리각 명령 (ctrlrange ±1 = ±20°). CPG 제거.
         self.action_space = spaces.Box(
-            low=-1.0, high=1.0, shape=(3,), dtype=np.float32
+            low=-1.0, high=1.0, shape=(1,), dtype=np.float32
         )
 
         self._step_count = 0
@@ -274,9 +265,8 @@ class FishSwimEnv(gym.Env):
         self._prev_distance = self._distance_to_target()
         self._prev_pos = self._torso_pos()[:2].copy()
         if self.action_history_n > 0:
-            self._action_history = np.zeros((self.action_history_n, 3), dtype=np.float32)
-        self._cpg_phase = 0.0
-        self._prev_action = np.zeros(3, dtype=np.float32)
+            self._action_history = np.zeros((self.action_history_n, 1), dtype=np.float32)
+        self._prev_action = np.zeros(1, dtype=np.float32)
         self._v_lat_buffer[:] = 0.0
         # m4_cpg_v21: ep 동안 course(진행·target)·머리각 누적 → 종료 시 strict 졸업 판정용.
         self._course_buf = []
@@ -297,24 +287,14 @@ class FishSwimEnv(gym.Env):
             self._turn_sign = 0.0
         return self._get_obs(), {}
 
-    def _synth_ctrl(self, freq: float, amp: float, offset: float) -> float:
-        """CPG: ctrl(t) = clip(amp·sin(2π·phase) + offset, -1, 1).
-        phase 는 env state 로 누적 (oscillator continuity) — freq 가 step 간 변해도 ctrl 연속.
-        """
-        ctrl = amp * np.sin(2.0 * np.pi * self._cpg_phase) + offset
-        self._cpg_phase = (self._cpg_phase + freq * self.model.opt.timestep) % 1.0
-        return float(np.clip(ctrl, -1.0, 1.0))
-
     def step(self, action: np.ndarray):
         clipped = np.clip(action, -1.0, 1.0).astype(np.float32)
-        # m4_cpg_v1: action 3D → 물리 단위 매핑.
-        freq = FREQ_MIN + (float(clipped[0]) + 1.0) * 0.5 * (FREQ_MAX - FREQ_MIN)
-        amp = AMP_MIN + (float(clipped[1]) + 1.0) * 0.5 * (AMP_MAX - AMP_MIN)
-        offset = float(clipped[2])
-        # frame_skip 내부에서 매 mj_step마다 CPG ctrl 합성·phase 누적.
+        # m4_direct: action 1D = 꼬리각 직접 명령. frame_skip 동안 zero-order-hold (ctrl 상수 유지),
+        # position 서보(kp=100, kv=5)가 목표각으로 구동. 파형(진동)은 정책이 매 step 직접 그려 emergent.
+        ctrl = float(clipped[0])
         timestep = self.model.opt.timestep
         for _ in range(self.frame_skip):
-            self.data.ctrl[0] = self._synth_ctrl(freq, amp, offset)
+            self.data.ctrl[0] = ctrl
             mujoco.mj_step(self.model, self.data)
             if self._viewer is not None:
                 self._viewer.sync()
@@ -371,7 +351,7 @@ class FishSwimEnv(gym.Env):
                 back_pen = BACK_PEN_W * (-cos_hv) * v_norm
 
         # m4_cpg_v1: action smoothness — 정책 출력 변화 페널티 (ETH ANYmal 패턴).
-        # 3D action diff² 합. sine carrier 깨짐 차단·motor jerk ↓.
+        # m4_direct: 1D 직접 제어라 Δaction = 꼬리 진동 자체 → 진동 평활화(저주파·매끈 beat 유도). motor jerk ↓.
         action_diff_sq = float(np.sum((clipped - self._prev_action) ** 2))
         smooth_pen = SMOOTH_W * action_diff_sq
 
