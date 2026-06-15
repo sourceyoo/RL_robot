@@ -209,7 +209,7 @@ class FishSwimEnv(gym.Env):
         rel = self._target_pos() - self._torso_pos()
         rel_xy = rel[:2]
         rel_norm = float(np.linalg.norm(rel_xy))
-        head_dir = np.array([-np.cos(yaw), np.sin(yaw)])
+        head_dir = np.array([-np.cos(yaw), -np.sin(yaw)])
         align = float(np.dot(head_dir, rel_xy / rel_norm)) if rel_norm > 1e-6 else 0.0
         abs_yaw_err = float(np.arccos(np.clip(align, -1.0, 1.0)))
         distance = float(np.linalg.norm(rel))
@@ -273,15 +273,15 @@ class FishSwimEnv(gym.Env):
         self._headang_buf = []
         # m4_cpg_v11 (B-1): ep 시작 머리방향 기준 target offset·회전부호 고정 (reach 게이팅용).
         yaw0 = float(self.data.qpos[IDX_YAW])
-        head_dir0 = np.array([-np.cos(yaw0), np.sin(yaw0)])
+        head_dir0 = np.array([-np.cos(yaw0), -np.sin(yaw0)])
         rel0 = self._target_pos()[:2] - self._torso_pos()[:2]
         rel0_norm = float(np.linalg.norm(rel0))
         self._yaw0 = yaw0
         if rel0_norm > 1e-6:
             align0 = float(np.dot(head_dir0, rel0 / rel0_norm))
             self._target_offset = float(np.arccos(np.clip(align0, -1.0, 1.0)))
-            # head_dir=[-cos,sin] 매핑상 yaw 증가 = 머리 시계방향 → cross 부호 반전해야 "target쪽 yaw 변화>0".
-            self._turn_sign = -float(np.sign(head_dir0[0] * rel0[1] - head_dir0[1] * rel0[0]))
+            # head_dir=[-cos,-sin](실제 mesh 코) 매핑상 cross 부호가 곧 "target쪽 yaw 변화>0" 부호. 직접 사용.
+            self._turn_sign = float(np.sign(head_dir0[0] * rel0[1] - head_dir0[1] * rel0[0]))
         else:
             self._target_offset = 0.0
             self._turn_sign = 0.0
@@ -308,7 +308,7 @@ class FishSwimEnv(gym.Env):
         reached = distance < self.success_radius
 
         yaw = float(self.data.qpos[IDX_YAW])
-        head_dir = np.array([-np.cos(yaw), np.sin(yaw)])
+        head_dir = np.array([-np.cos(yaw), -np.sin(yaw)])
         rel = self._target_pos()[:2] - torso_xy
         rel_norm = float(np.linalg.norm(rel))
         align = float(np.dot(head_dir, rel / rel_norm)) if rel_norm > 1e-6 else 0.0
@@ -357,7 +357,7 @@ class FishSwimEnv(gym.Env):
 
         # m4_cpg_v11 (B-1): 머리가 target쪽으로 돈 비율 turn_ratio — reach·lat_pen 공용 게이트.
         # (yaw−yaw0)·turn_sign / offset. 게걸음(yaw≈yaw0)→0, 선회(yaw≈offset)→1. clip[0,1](역/과회전 차단).
-        # head_dir=[-cos,sin] 매핑상 turn_sign 부호 반전 적용됨(reset). offset≈0(s1 직진)→1. head wag 1.3°라 안정.
+        # head_dir=[-cos,-sin](실제 mesh 코). turn_sign은 cross 직접 사용(reset). offset≈0(s1 직진)→1. head wag 1.3°라 안정.
         if self._target_offset > 1e-3:
             turn_ratio = float(np.clip((yaw - self._yaw0) * self._turn_sign / self._target_offset, 0.0, 1.0))
         else:
