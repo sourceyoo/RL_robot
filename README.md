@@ -3,7 +3,7 @@
 단일 관절 물고기 로봇(KUFIsh_III)의 MuJoCo + SAC 강화학습 코드를 **처음부터 끝까지 실행**하기 위한 가이드. 환경 준비 → 설치 → 학습 → 평가 → 시각화 → 진단 → 백업 순서로 정리한다.
 
 > 이 문서는 코드를 받은 사람이 그대로 재현할 수 있도록 하는 실행 매뉴얼이다.
-> 기준 브랜치: **`m4_direct`** (CPG 제거 → 정책이 꼬리각을 직접 1D 명령).
+> 기준 브랜치: **`m4_cpg`** (CPG 기반 — 정책이 action 3D `[freq, amp, offset]`로 꼬리 진동을 합성).
 
 ---
 
@@ -56,7 +56,7 @@
 # 1) 코드 클론
 git clone https://github.com/sourceyoo/RL_robot.git
 cd RL_robot
-git checkout m4_direct          # 현재 활성 브랜치
+git checkout m4_cpg             # CPG 기반 브랜치
 
 # 2) (권장) 가상환경
 python3 -m venv .venv
@@ -141,7 +141,7 @@ python3 curriculum.py --start-stage N --end-stage N --no-viewer
 ```bash
 # seed 0 으로 stage 1 학습, seed별 nested 디렉토리에 저장
 python3 curriculum.py --start-stage 1 --end-stage 1 \
-    --seed 0 --tb-tag m4_direct_seed0 --runs-subdir m4_direct/seed0 --no-viewer
+    --seed 0 --tb-tag m4_cpg_seed0 --runs-subdir m4_cpg/seed0 --no-viewer
 ```
 
 > seed 산출물은 `<card>/seed{N}/` nested 구조 (runs·plots·tb_logs 셋 다)로 정리한다.
@@ -223,15 +223,14 @@ cd sim
 python3 diagnostics/<name>.py
 ```
 
-m4_direct 핵심 진단:
+m4_cpg 핵심 진단:
 
 | 스크립트 | 용도 |
 |---|---|
 | `freq_sweep.py` | 꼬리 sine 주파수 스윕 → 추진 방향 검증 (−x 전진 확인) |
-| `direct_gait.py` | 직접 제어 직진 보행(파형) 시각화 |
-| `direct_turn.py` | 직접 제어 선회 trajectory 진단 |
-| `measure_speed.py` | 전진 속도 측정 |
 | `yaw_test.py` | 회전 능력(비대칭 패턴) 진단 |
+| `sf_asym_yaw_test.py` | 비대칭 duty 패턴 yaw 진단 |
+| `measure_speed.py` | 전진 속도 측정 |
 
 > 선회 진단 시: 숫자(방향 cos) 이전에 **trajectory를 먼저 확인**. 작은 각에서는 cos가 함정이 됨.
 
